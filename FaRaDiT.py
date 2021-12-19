@@ -10,7 +10,9 @@ References: ???
 import sys
 import numpy as np
 import matplotlib.pyplot as plt
-from radmc3dPy import image
+try:
+    from radmc3dPy import image
+except ImportError: print("radmc3dPy package not found! Image function via python won't work, you may need to call directly radmc3d image")
 from scipy.optimize import curve_fit
 from scipy import integrate
 import os
@@ -1363,8 +1365,10 @@ class Disk():
         if 0 in nx:
             raise ValueError("Grid error: wrong dimension of density array. Perhaps it wasn't thickened yet?")
 
+        on_off = [0 if n == 1 else 1 for n in nx]   #looks at which dimension is "turned off", i.e. which has only 1 cell in it. Radmc3d cares
+
         with open("amr_grid.inp", "w") as outfile:
-            outfile.write(f"1\n{style}\n{grid_type}\n0\n1 1 1\n{nx[0]} {nx[1]} {nx[2]}\n")
+            outfile.write(f"1\n{style}\n{grid_type}\n0\n{on_off[0]} {on_off[1]} {on_off[2]}\n{nx[0]} {nx[1]} {nx[2]}\n")
 
             outfile.write(f"{self.r_inf[0]*au/cm:.9e}\n")
             for rboundary in self.r_sup:
@@ -2261,6 +2265,7 @@ def main():
     disk = Disk()
 
     """casova narocnost"""
+    #region
     #import cProfile
     #import pstats
     #profile = cProfile.Profile()
@@ -2268,18 +2273,20 @@ def main():
     #ps = pstats.Stats(profile)
     #ps.sort_stats("cumtime")
     #ps.print_stats()
-
+    #endregion
 
     
     disk.fargo_read_fields(no = 4)
     disk.inner_outer_finish(outer_steps=500, inner_steps=500)
-    disk.flat_relax(angular = 4, radial = 1000)
-    disk.radmc_write_inputs(nthet = 500, nphot = 50000000)
-    #os.system('radmc3d mctherm setthreads 4 countwrite 100000')
-    #image.makeImage(npix=300., wav=0.2, incl=0, phi=0., sizeau=80.)
-    #im = image.readImage()
-    #image.plotImage(im, au=True, log=True, maxlog=19, saturate=1, cmap=plt.cm.gist_heat, pltshow = True)
+    disk.flat_relax(angular = 1, radial = 1000)
+    disk.radmc_write_inputs(nthet = 500, nphot = 500000)
+    #os.system('export PATH="/home/janoska/bin:$PATH"') #used for the hilda
+    os.system('radmc3d mctherm setthreads 4 countwrite 100000')
+    image.makeImage(npix=300., wav=0.2, incl=0, phi=0., sizeau=80.)
+    im = image.readImage()
+    image.plotImage(im, au=True, log=True, maxlog=19, saturate=1, cmap=plt.cm.gist_heat, pltshow = True)
     """Ukázka, že hustota klesne k nule mnoem rychleji, než naroste teplota a tedy adiabaticky disk je fajn"""
+    #region
     """
     disk.radmc_read_grid()
     disk.radmc_read_density()
@@ -2290,8 +2297,10 @@ def main():
         fig2 = plt.figure()
         disk.plot_density_profile(along = 'perpendicular', r = 3*i, fig = fig2, show = True)
     """
-
+    #endregion
+    
     """vypařování hustot"""
+    #region
     """
     nrad, nthet, nphi = 60, 20, 30
     disk.fargo_read_fields(no = 4)
@@ -2343,8 +2352,10 @@ def main():
     im = image.readImage()
     image.plotImage(im, au=True, log=True, maxlog=6, saturate=1, cmap=plt.cm.gist_heat, pltshow = True)
     """
+    #endregion
 
     """hustota vs teplota"""
+    #region
     """
     plt.scatter(disk.density.ravel(), disk.T.ravel(), s = 0.5)
     plt.xlabel("Volumetric density [kg·m¯³]")
@@ -2359,7 +2370,7 @@ def main():
     #plt.ylim((0,1))
     plt.show()
     """
-
+    #endregion
 
     #fig = plt.figure()
     #disk.radmc_read_temperature()
