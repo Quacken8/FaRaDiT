@@ -284,7 +284,7 @@ class Disk():
                 else:
                     print(name, '\t', value)
 
-    def plot_rho_slice(self, phi = 0, thickness = f_z, fine = 100, maxheight = None, logarithmic_scale=False, note = "", show = True, fig = None):
+    def plot_density_slice(self, phi = 0, thickness = f_z, fine = 100, maxheight = None, logarithmic_scale=False, note = "", show = True, fig = None):
         """
         Creates 2D colormesh vertical plot of the disk's volumetric density along a ray coming from the star
         --------------------
@@ -321,20 +321,20 @@ class Disk():
             if maxheight is None: maxheight = 2
             sigma_seed = self.density[:,index]
             T_seed = self.T[:,index]
-            rho_slice = np.array([[]])
+            density_slice = np.array([[]])
             dz = maxheight/(2*fine+1)
             for i in range(-fine,fine+1):
                 stack = [thickness(sigma = sigma_seed[j], T = T_seed[j], h = i*dz*au, equatorial_r = self.r_med[j]*au) for j in range(len(sigma_seed))]
-                if (i == -fine): rho_slice = stack
-                else: rho_slice = np.vstack((rho_slice, stack))
+                if (i == -fine): density_slice = stack
+                else: density_slice = np.vstack((density_slice, stack))
             equatorial_r = np.insert(self.r_sup, 0, self.r_inf[0])
             z = np.linspace(-fine*dz, fine*dz, 2*fine+2)
             r_mesh, z_mesh = np.meshgrid(equatorial_r,z)
             ax = fig.add_subplot(111)
             if logarithmic_scale: 
                 import matplotlib.colors
-                ap = ax.pcolormesh(r_mesh,z_mesh,rho_slice, norm=matplotlib.colors.LogNorm(), cmap = "hot")
-            else: ap = ax.pcolormesh(r_mesh ,z_mesh, rho_slice, cmap = "hot")
+                ap = ax.pcolormesh(r_mesh,z_mesh,density_slice, norm=matplotlib.colors.LogNorm(), cmap = "hot")
+            else: ap = ax.pcolormesh(r_mesh ,z_mesh, density_slice, cmap = "hot")
 
         elif self.density.ndim == 3:
             if maxheight is None: maxheight = 0#len(self.theta_med)
@@ -576,7 +576,7 @@ class Disk():
 
     def plot_T_profile(self, along = "ray", r = 4, phi = 0, logarithmic_scale = False, r_range = None, theta_range = None, note = "", show = True, fig = None, label = None):
         """
-        Plots equatorial temperature along a set curve
+        Plots temperature along a set curve
         --------------------
         Parameters:
         --------------------
@@ -616,11 +616,11 @@ class Disk():
                 end = len(self.theta_med)-1
             else:
                 theta_range = np.deg2rad(theta_range)
-                start = index_before(array = self.theta_med, value = theta_range[0])
-                end = index_before(array = self.theta_med, value = theta_range[1])
+                start = index_before(array = np.append(self.theta_med, np.pi-self.theta_med[::-1]), value = theta_range[0]) #all this strange reflected append is cuz the data is assumed symmetric around theta = pi/2
+                end = index_before(array = np.append(self.theta_med, np.pi-self.theta_med[::-1]), value = theta_range[1])
             r_index = index_before(array = self.r_med, value = r)
             x = np.rad2deg(self.theta_med[start:end])
-            data = self.T[r_index, start:end, phi_index]
+            data = np.append(self.T[:,:,:], self.T[:,::-1,:], axis = 1)[r_index, start:end, phi_index]
 
             plt.title(f"Temperature of the disk along a θ arc\n at φ = {phi}° and r = {r} au"+f"\n{note}"*(len(note)>0))
             plt.xlabel("θ [deg]")
@@ -628,17 +628,17 @@ class Disk():
         elif along.casefold() == "perpendicular":
             from scipy.interpolate import griddata
 
-            r_mesh, theta_mesh = np.meshgrid(self.r_med, self.theta_med)
+            r_mesh, theta_mesh = np.meshgrid(self.r_med, np.append(self.theta_med, np.pi-self.theta_med[::-1]))
             souradnice_sph = np.column_stack((r_mesh.ravel(), theta_mesh.ravel()))
 
             x = souradnice_sph[:,0]*np.sin(souradnice_sph[:,1])
             y = souradnice_sph[:,0]*np.cos(souradnice_sph[:,1])
 
             points = np.column_stack((x,y))
-            temps =  self.T[:, :, phi_index].T.ravel()
+            temps =  np.append(self.T[:, :, phi_index],self.T[:, ::-1, phi_index], axis = 1).T.ravel()
 
-            ys = np.linspace(-20, 20, num = 1000)
-            xs = r*np.ones(shape = 1000)
+            ys = np.linspace(-20, 20, num = 10000)
+            xs = r*np.ones(shape = 10000)
 
             interp = griddata(points, temps, (xs,ys), method = "nearest")
 
@@ -676,6 +676,111 @@ class Disk():
         plt.plot(x, data, label = label)
         if logarithmic_scale: plt.yscale('log')
         plt.ylabel("T [K]")
+        
+        if show: plt.show()
+
+    def plot_density_profile(self, along = "ray", r = 4, phi = 0, logarithmic_scale = False, r_range = None, theta_range = None, note = "", show = True, fig = None, label = None):
+        """
+        Plots gas density along a set curve
+        --------------------
+        Parameters:
+        --------------------
+        along: string, determines along which curve to plot the profile. Possibilities are:
+            "ray" — line from star through the equatorial plane
+            "perpendicular" — line perpendicular to the equatorial plane
+            "arc" — curve in 3D spherical coordinates with θ being the variable
+
+        phi [deg]: float, angular coordinate of the ray along which the plot is to be drawn
+
+        r [au]: float, radial coordinate of the ray along which the plot is to be drawn (if arc == "arc" or "perpendicular")
+        
+        logarithmic_scale: bool, if True, log scale will be used on the y axis
+        
+        r_range [au]: array-like, list containing boundaries of desired graph (if arc == "arc" or "perpendicular"),
+
+        theta_range [deg]: array-like, list containing boundaries of desired graph (if arc == "arc" or "perpendicular"),
+        
+        note: string, note to be written under the title,
+        
+        show: bool, if set to True the plot will be immediatelly shown. Otherwise plt.show() or other method with show = True has to be used later
+
+        fig: pyplot figure, which fig the plot is supposed to be added to
+        """
+
+        if fig is None: plt.figure()
+        else: plt.figure(fig.number)
+        plt.subplot(111)
+
+        phi_index = index_before(self.phi_med, phi/180*np.pi)
+
+        if along.casefold() == "arc":
+            if self.density.ndim != 3:
+                raise ValueError("density plot error: Density field is not 3D! Can't plot the third dimension!")
+            if theta_range is None:
+                start = 0
+                end = len(self.theta_med)-1
+            else:
+                theta_range = np.deg2rad(theta_range)
+                start = index_before(array = np.append(self.theta_med, np.pi-self.theta_med[::-1]), value = theta_range[0]) #all this strange reflected append is cuz the data is assumed symmetric around theta = pi/2
+                end = index_before(array = np.append(self.theta_med, np.pi-self.theta_med[::-1]), value = theta_range[1])
+            r_index = index_before(array = self.r_med, value = r)
+            x = np.rad2deg(self.theta_med[start:end])
+            data = np.append(self.density[:,:,:], self.density[:,::-1,:], axis = 1)[r_index, start:end, phi_index]
+
+            plt.title(f"Density of the disk's dust along a θ arc\n at φ = {phi}° and r = {r} au"+f"\n{note}"*(len(note)>0))
+            plt.xlabel("θ [deg]")
+        
+        elif along.casefold() == "perpendicular":
+            from scipy.interpolate import griddata
+
+            r_mesh, theta_mesh = np.meshgrid(self.r_med, np.append(self.theta_med, np.pi-self.theta_med[::-1]))
+            souradnice_sph = np.column_stack((r_mesh.ravel(), theta_mesh.ravel()))
+
+            x = souradnice_sph[:,0]*np.sin(souradnice_sph[:,1])
+            y = souradnice_sph[:,0]*np.cos(souradnice_sph[:,1])
+
+            points = np.column_stack((x,y))
+            rhos =  np.append(self.density[:, :, phi_index], self.density[:, ::-1, phi_index], axis = 1).T.ravel()
+
+            ys = np.linspace(-20, 20, num = 10000)
+            xs = r*np.ones(shape = 10000)
+
+            interp = griddata(points, rhos, (xs,ys), method = "nearest")
+
+            #plt.scatter(x, y)
+            #plt.plot(xs ,ys, color = "b")
+            #plt.xlabel("r [au]")
+            #plt.ylabel("z [au]")
+            #plt.figure()
+            plt.title(f"Density of the disk's dust along a line perpendcular to the disk\n at φ = {phi}° and r = {r} au"+f"\n{note}"*(len(note)>0))
+            x = ys
+            data = interp
+            #plt.plot(ys, interp)
+            plt.xlabel("z [au]")
+            #plt.ylabel("T [K]")
+
+        elif along.casefold() == "ray":
+            if r_range is None:
+                start = 0
+                end = len(self.density[:,phi_index])-1
+            else:
+                start = index_before(array = self.r_med, value = r_range[0])
+                end = index_before(array = self.r_med, value = r_range[1])
+            x = self.r_med[start:end]
+            if self.density.ndim == 2:
+                data = self.density[start:end,phi_index]
+            else:
+                theta_midplane = (len(self.theta_med)-1)
+                data = self.density[start:end, theta_midplane, phi_index]
+
+            plt.xlabel("r [au]")
+            plt.title(f"Equatorial density of the disk's dust at φ = {phi}°"+f"\n{note}"*(len(note)>0))
+        else: raise ValueError(f"density plot error: Unknow option '{along}'! Only accepted options are 'ray', 'perpendicular' and 'arc'")
+
+        
+        plt.plot(x, data, label = label)
+        if logarithmic_scale: plt.yscale('log')
+        plt.ylabel("density [kg/m³]")
         
         if show: plt.show()
 
@@ -1229,7 +1334,7 @@ class Disk():
                         elementary_volumes = (self.phi_sup[phi_index]-self.phi_inf[phi_index])*(self.r_sup[first_index:last_index]**3-self.r_inf[first_index:last_index]**3)/3*(np.cos(self.theta_inf[theta_index])-np.cos(self.theta_sup[theta_index]))*au*au*au
                         total_mass += np.sum(elementary_volumes*average_rhos)
 
-                        (average_rhos*cm*cm*cm/gram).tofile(outfile, sep = "\n", format="%9e")
+                        (average_rhos*cm*cm*cm/gram).tofile(outfile, sep = "\n", format="%.9e")
                         outfile.write("\n")
 
                         first_index, last_index = last_index, last_index + buffer_size
@@ -1883,7 +1988,7 @@ class Disk():
         image.plotImage(im, au=True, log=True, maxlog=13, saturate=1e-7, cmap=plt.cm.get_cmap("gist_heat"))
         return [(time.time()-start_time)/60/60, radial_relax, 2*nthet, angular_relax]
 
-    def radmc_write_inputs(self, mrw = None, thickness = f_z, nthet = 100, binary = True, buffer_size = 4096, **kwargs):
+    def radmc_write_inputs(self, mrw = None, thickness = f_z, nthet = 100, binary = True, buffer_size = 4096, gas_to_dust = True, **kwargs):
         """
         Creates all the necessary files for running radmc3d script
         --------------------
@@ -1901,6 +2006,8 @@ class Disk():
         nthet: float, number of cells in theta direction to be made above the disk. The same amount is generated beneath the disk as well
 
         buffer_size: int, max number of floats to be stored in RAM at any given point
+
+        gas_to_dust: bool, if True, will assume only gas density was provided and will perform gas_to_dust function
 
         **kwargs: see radmc3d manual, chapter MAIN INPUT AND OUTPUT FILES OF RADMC-3D, section INPUT: radmc3d.inp. There's like a brazillion of inputs, you can't demand from me to write them all here
         """
@@ -1930,7 +2037,7 @@ class Disk():
         with open("radmc3d.inp", "w") as radmcinp:
             for name, value in radmc_inp_params.items():
                 print(f"{name} = {value}", file = radmcinp)
-        self.gas_to_dust()
+        if gas_to_dust: self.gas_to_dust()
         self.radmc_write_dust_density(binary = binary, thickness = thickness, nthet=nthet, buffer_size=buffer_size)
         self.radmc_grid()
         self.radmc_wavelength()
@@ -2092,26 +2199,43 @@ class Disk():
         
         self.T = (self.T^4+additional_T4(self.r_med, self.sigma))^.25
 
-    def add_heatsource(self):
+    def add_heatsource(self, binary = False):
         """
         Adds heatsource file for radmc3d
         maybe to be used as a source of viscous heating?
-        TBD
-        SCALE IT WITH RHO!!
+        according to https://www.ita.uni-heidelberg.de/~dullemond/lectures/leshouches2013.pdf, but study more of this before using!!: https://www.epj-conferences.org/articles/epjconf/pdf/2015/21/epjconf_ppd2014_00011.pdf
+
+        zda se, ze nejlepsi bude Q_plus = ρν[r ∂r Ω]^2 kde nu = αcₛ²/Ω kde α je alpha parametr, cₛ rychlost zvuku viz rovnice 20 https://arxiv.org/pdf/2110.11341.pdf
+
+        bacha mluvi jeste o tepelne vodivosti
         """
 
-        #self.radmc_read_density()
-        outfile = open("heatsource.inp", "w")
-        outfile.write(f"1\n{len(self.phi_med)*len(self.theta_med)*len(self.r_med)}\n")
-        for phi in self.phi_med:
-            for theta in self.theta_med:
-                for r in self.r_med:
-                    #normuj hustotou!!!!!! (najít spodní limit pro kdy je viskozita dulezita)
-                    if theta > 2*np.pi/5:
-                        outfile.write("1e-80\n")
-                    else: outfile.write("0\n")
+        #nu = ?? #viscostiy in SI      
 
-        outfile.close()
+        self.radmc_read_density()
+        if self.density().ndim == 2: raise ValueError("Heatsource error: disk is flat!")
+
+        if binary:
+            outfile = open("heatsource.inp", "w")
+            outfile.write(f"1\n{len(self.phi_med)*len(self.theta_med)*len(self.r_med)}\n")
+
+            for phi_index, phi in enumerate(self.phi_med):  #double for loop, might be too slow!
+                for theta_index, theta in enumerate(self.theta_med):
+                        Q_plus = 9/4*self.density[:,theta_index,phi_index]*nu*(G*self.par["M_star"]/self.r_med**3)**2
+                        Q_plus.tofile(outfile, sep = "\n", format = '%.9e')
+                        outfile.write("\n")
+
+            outfile.close()
+        if not binary: 
+            outfile = open("heatsource.inp", "wb")
+            np.array([1, 8, len(self.phi_med)*len(self.theta_med)*len(self.r_med)]).tofile(outfile)    #header containting 1, num of bits (8) and number of cells
+
+            for phi_index, phi in enumerate(self.phi_med):
+                for theta_index, theta in enumerate(self.theta_med):
+                        Q_plus = 9/4*self.density[:,theta_index,phi_index]*nu*(G*self.par["M_star"]/self.r_med**3)**2
+                        Q_plus.tofile(outfile)
+
+            outfile.close()
 
 
     def kopecek(self, r = 8, size = 0.3):
@@ -2146,16 +2270,26 @@ def main():
     #ps.print_stats()
 
 
-    """pro miru bartu"""
+    
     disk.fargo_read_fields(no = 4)
-    #disk.inner_outer_finish()
-    #disk.flat_relax(angular = disk.par["Nsec"], radial = disk.par["Nrad"])
-    disk.radmc_write_inputs(nthet = 4, nphot = 100000000)
-    os.system('radmc3d mctherm setthreads 4 countwrite 100000')
-    image.makeImage(npix=300., wav=0.2, incl=0, phi=0., sizeau=80.)
-    im = image.readImage()
-    image.plotImage(im, au=True, log=True, maxlog=19, saturate=1, cmap=plt.cm.gist_heat, pltshow = True)
-
+    disk.inner_outer_finish(outer_steps=500, inner_steps=500)
+    disk.flat_relax(angular = 4, radial = 1000)
+    disk.radmc_write_inputs(nthet = 500, nphot = 50000000)
+    #os.system('radmc3d mctherm setthreads 4 countwrite 100000')
+    #image.makeImage(npix=300., wav=0.2, incl=0, phi=0., sizeau=80.)
+    #im = image.readImage()
+    #image.plotImage(im, au=True, log=True, maxlog=19, saturate=1, cmap=plt.cm.gist_heat, pltshow = True)
+    """Ukázka, že hustota klesne k nule mnoem rychleji, než naroste teplota a tedy adiabaticky disk je fajn"""
+    """
+    disk.radmc_read_grid()
+    disk.radmc_read_density()
+    disk.radmc_read_temperature()
+    for i in range(4,6):
+        fig1 = plt.figure()
+        disk.plot_T_profile(along = 'perpendicular', r = 3*i, fig = fig1, show = False)
+        fig2 = plt.figure()
+        disk.plot_density_profile(along = 'perpendicular', r = 3*i, fig = fig2, show = True)
+    """
 
     """vypařování hustot"""
     """
