@@ -576,7 +576,7 @@ class Disk():
         
         if show: plt.show()
 
-    def plot_T_profile(self, along = "ray", r = 4, phi = 0, logarithmic_scale = False, r_range = None, theta_range = None, note = "", show = True, fig = None, label = None):
+    def plot_T_profile(self, along = "ray", r = 4, phi = 0, logarithmic_scale = False, r_range = None, theta_range = None, z_range = None, note = "", show = True, fig = None, label = None):
         """
         Plots temperature along a set curve
         --------------------
@@ -593,9 +593,11 @@ class Disk():
         
         logarithmic_scale: bool, if True, log scale will be used on the y axis
         
-        r_range [au]: array-like, list containing boundaries of desired graph (if arc == "arc" or "perpendicular"),
+        r_range [au]: array-like, list containing boundaries of desired graph (if arc == "arc"),
 
-        theta_range [deg]: array-like, list containing boundaries of desired graph (if arc == "arc" or "perpendicular"),
+        theta_range [deg]: array-like, list containing boundaries of desired graph (if arc == "arc"),
+
+        z_range [au]: array-like, list containing boundaries of desired graph (if along == "perpendicular")
         
         note: string, note to be written under the title,
         
@@ -639,7 +641,8 @@ class Disk():
             points = np.column_stack((x,y))
             temps =  np.append(self.T[:, :, phi_index],self.T[:, ::-1, phi_index], axis = 1).T.ravel()
 
-            ys = np.linspace(-20, 20, num = 10000)
+            if z_range is None: z_range = [-5, 5]
+            ys = np.linspace(-z_range[0], z_range[1], num = 10000)
             xs = r*np.ones(shape = 10000)
 
             interp = griddata(points, temps, (xs,ys), method = "nearest")
@@ -2216,8 +2219,8 @@ class Disk():
 
         #nu = ?? #viscostiy in SI      
 
-        self.radmc_read_density()
-        if self.density().ndim == 2: raise ValueError("Heatsource error: disk is flat!")
+        if len(self.density) == 0: self.radmc_read_density()
+        if self.density.ndim == 2: raise ValueError("Heatsource error: disk is flat!")
 
         if binary:
             outfile = open("heatsource.inp", "w")
@@ -2285,6 +2288,11 @@ def main():
     image.makeImage(npix=300., wav=0.2, incl=0, phi=0., sizeau=80.)
     im = image.readImage()
     image.plotImage(im, au=True, log=True, maxlog=19, saturate=1, cmap=plt.cm.gist_heat, pltshow = True)
+
+    """Příprava pár disků na hildu"""
+    #region
+    #endregion
+
     """Ukázka, že hustota klesne k nule mnoem rychleji, než naroste teplota a tedy adiabaticky disk je fajn"""
     #region
     """
