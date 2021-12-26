@@ -475,7 +475,7 @@ class Disk():
         plt.colorbar(ap, label = "kg·m⁻²")
         if show: plt.show()
 
-    def plot_density_profile(self, along = "ray", r = 4, phi = 0, logarithmic_scale=False, r_range = None,  theta_range = None, note = "", show = True, fig = None, label = None):
+    def plot_density_profile(self, along = "ray", r = 4, phi = 0, logarithmic_scale=False, r_range = None, theta_range = None, z_range = None, note = "", show = True, fig = None, label = None):
         """
         Plots surface density along a ray from the star
         --------------------
@@ -495,7 +495,9 @@ class Disk():
         r_range [au]: array-like, list containing boundaries of desired graph (if arc == "arc" or "perpendicular"),
 
         theta_range [deg]: array-like, list containing boundaries of desired graph (if arc == "arc" or "perpendicular"),
-        
+
+        z_range [au]: array-like, list containing boundaries of desired graph (if along == "perpendicular")
+                
         note: string, note to be written under the title,
         
         show: bool, if set to True the plot will be immediatelly shown. Otherwise plt.show() or other method with show = True has to be used later
@@ -538,7 +540,8 @@ class Disk():
             points = np.column_stack((x,y))
             temps =  self.density[:, :, phi_index].T.ravel()
 
-            ys = np.linspace(-20, 20, num = 1000)
+            if z_range is None: z_range = [-5, 5]
+            ys = np.linspace(z_range[0], z_range[1], num = 10000)
             xs = r*np.ones(shape = 1000)
 
             interp = griddata(points, temps, (xs,ys), method = "nearest")
@@ -642,7 +645,7 @@ class Disk():
             temps =  np.append(self.T[:, :, phi_index],self.T[:, ::-1, phi_index], axis = 1).T.ravel()
 
             if z_range is None: z_range = [-5, 5]
-            ys = np.linspace(-z_range[0], z_range[1], num = 10000)
+            ys = np.linspace(z_range[0], z_range[1], num = 10000)
             xs = r*np.ones(shape = 10000)
 
             interp = griddata(points, temps, (xs,ys), method = "nearest")
@@ -815,9 +818,11 @@ class Disk():
         TBD
         """
         phi_index = index_before(self.phi_med, phi/180*np.pi)
+        if len(self.density) == 0: raise ValueError("Scale height error: missing density field!")
         if self.density.ndim == 2:
-            x = self.r_med
+            x = np.append(self.r_med, self.r_med)
             y = thickness(equatorial_r = x*au, sigma = self.density[:, phi_index], T = self.T[:, phi_index], M_star = self.par["M_star"][0], getH = True)/au
+            y = np.append(y, -y)    #for symmetry around equatorial plane
             if fig is None: plt.figure()
             else: plt.figure(fig.number)
             plt.plot(x,y, label = "Scaleheight")
@@ -827,17 +832,19 @@ class Disk():
         elif self.density.ndim == 3:
             raise ValueError("3D density scale height not yet supported, I'm lazy")
 
-    def optical_depth(self, phi = 0, from_star = False, equatorial_r = 4, wav = 870, thickness = f_z, filename = None, message = True):
+    def optical_depth(self, how_close_to_equat = None, phi = 0, from_star = False, equatorial_r = 4, wav = 870, thickness = f_z, filename = None, message = True):
         """
         Calculates (and returns) optical depth along a line perpendicular to the equatorial plane of the disk at a chosen point or a line from the star through the midplane
         --------------------
         Parameters:
         -------------------- 
+        how_close_to_equat [m]: float, if from_star == False, how close to the equatorial plane does the ray origin from. If None will return depth along a ray coming all the way through the disc i.e. -10 au to 10 au (expected for those to be far enough to be "infinite" --- might be a problem at some point but rn I couldn't be bothered; it's 3 AM and I have too much work left to do. Good luck future user! :^)  ) 
+
         phi [deg]: float, phi coordinate of the point of intersection of the disk and the line
 
         from_star: bool, if False, the line will be perpendicular to the midplane and cross it at 'equatorial_r' [au]. If True, the line of sight will go from the star through the midplane of the disk and 'equatorial_r' is ignored
 
-        equatorial_r [au]: float, r coordinate of the point of intersection of the disk and the line
+        equatorial_r [m]: float, r coordinate of the point of intersection of the disk and the line
 
         wav [μm]: float, wavelength of the light the optical depth of which is to be calculated
 
@@ -870,15 +877,18 @@ class Disk():
             if message: print(f"Optical depth along a line in the midplane at phi = {phi} deg for wavelength {wav} microns is {depth:.5e}")
 
         else:
-            interpolated_T = np.interp(equatorial_r, self.r_med[:], self.T[:, phi_index])
-            interpolated_sigma = np.interp(equatorial_r, self.r_med[:], self.density[:, phi_index])
+            interpolated_T = np.interp(equatorial_r, au*self.r_med[:], self.T[:, phi_index])
+            interpolated_sigma = np.interp(equatorial_r, au*self.r_med[:], self.density[:, phi_index])
 
-            H = thickness(sigma = interpolated_sigma, T = interpolated_T, equatorial_r = equatorial_r*au, M_star = self.par["M_star"][0], getH=True)
+            H = thickness(sigma = interpolated_sigma, T = interpolated_T, equatorial_r = equatorial_r, M_star = self.par["M_star"][0], getH=True)
 
             def integrand(z):
-                return kappa*thickness(h = z, sigma = interpolated_sigma, T = interpolated_T, equatorial_r = equatorial_r*au, M_star = self.par["M_star"][0])
+                return kappa*thickness(h = z, sigma = interpolated_sigma, T = interpolated_T, equatorial_r = equatorial_r, M_star = self.par["M_star"][0])
 
-            depth, err = integrate.quad(integrand, -10*au, 10*au, points = [-10*H, 0, 10*H])
+            if how_close_to_equat is None: boundary = -10*au    #that's more or less infinity, right? :^)
+            else: boundary = how_close_to_equat
+
+            depth, err = integrate.quad(integrand, boundary, 10*au, points = [-10*H, 0, 10*H])
             if message: print(f"Optical depth for wavelength {wav} microns along a line intersecting midplane at point r = {equatorial_r:.2f} au, phi = {phi} deg is {depth:.5e}")
         return depth
 
@@ -1172,6 +1182,58 @@ class Disk():
 
     ##radmc3D procedures
     ##ALL RADMC3D FILES NEED TO BE IN CGS, conversion happens at the end of each procedure tho
+
+    def set_theta_boundary(self, wanted_depth = 1, extra_margin = np.pi/10, wav = 870, thickness = f_z):
+        """
+        Sets the theta boundary such that only the disk with at least sufficeint "wanted_depth" is included
+        Should be run BEFORE write density (obviously)
+        --------------------
+            Parameters:
+        --------------------
+        wanted_depth: double, smallest wanted depth such that this part of the disk is included
+
+        extra_margin [rad]: margin on top of the wanted crop
+
+        wav [micron]: double, wavelenght at which to measure the optical depth
+        """
+
+        # I only look at the points with the highest scale theta atan(H/r); expecting those to have the largest tau
+
+        tiled_rs = au*np.tile(self.r_med, ( len(self.T.T) ,1)).T
+        scale_heights = thickness(T=self.T, equatorial_r = tiled_rs, getH=True)
+        scale_thets = np.arctan(scale_heights/tiled_rs)
+        suspect = np.unravel_index(scale_thets.argmax(), scale_thets.shape)
+        suspect_r = self.r_med[suspect[0]]*au
+        suspect_phi = self.phi_med[suspect[1]]
+        
+        # Now I find the theta at which tau gets small enogh with sime quick interval halving (newton method might be super izi TBD)
+
+        highest_theta = 0
+        max_iterations = 10000
+        max_z = 10*au   #is this infinite enough?
+        min_z = 0*au
+        tolerance = 1e-3    #is this too tolerant?
+        last_guess = 1e10
+        initial_guess = 0.1*au
+        for i in range(max_iterations):
+            last_guess = initial_guess
+            if self.optical_depth(how_close_to_equat=initial_guess, phi = suspect_phi, equatorial_r = suspect_r, wav = wav, message = False, thickness = thickness) > wanted_depth:
+                min_z = initial_guess
+                initial_guess = (min_z+max_z)*0.5
+            else:
+                max_z = initial_guess
+                initial_guess = (min_z+max_z)*0.5
+            if abs(last_guess-initial_guess)<tolerance:
+                break
+        found_z=initial_guess
+        found_theta = 0.5*np.pi-np.arctan(found_z/suspect_r)
+        if found_theta > highest_theta: highest_theta = found_theta
+
+        highest_theta -= extra_margin
+
+        self.par["Thetamin"] = highest_theta
+
+        print(f"Lower theta boundary cropped to {np.rad2deg(highest_theta)} deg")
 
     def radmc_write_dust_density(self, binary = True, thickness = f_z, nthet = 100, buffer_size = 4096, note = "", theta_min = np.pi*0.25):
         """
@@ -2278,7 +2340,46 @@ def main():
     #ps.print_stats()
     #endregion
 
-    
+    """simulace pro Subra na instruktaz ohledne Tigeru"""
+    #region
+    """
+    disk.fargo_read_fields(no = 4)
+    disk.inner_outer_finish(outer_steps=500, inner_steps=500)
+    disk.flat_relax(angular = 3*10, radial = 6*60)
+    disk.radmc_write_inputs(nthet = 6*30, nphot = 15000000, mrw = True)
+    """
+    #endregion
+
+    """test theta crop"""
+    #region
+    disk.fargo_read_fields(no=4)
+    disk.inner_outer_finish()
+    disk.set_theta_boundary(wanted_depth = 0.5, extra_margin=np.deg2rad(5))
+    disk.radmc_write_inputs(nthet = 20)
+    disk.radmc_read_density()
+    fig = plt.figure()
+    disk.plot_density_slice(fig = fig, show = False)
+    disk.plot_scale_height(fig = fig)
+    #endregion
+
+    """obrazky T profilu pro broze"""
+    #region
+    """
+    disk.radmc_read_grid()
+    disk.radmc_read_temperature()
+    fig = plt.figure()
+    disk.plot_T_slice(logarithmic_scale=True, show = False, fig = fig)
+    for i in range(1, 80, 19):    
+        disk.plot_T_profile(r=i, along="perpendicular", z_range=[-.2*i, .2*i], show=False, logarithmic_scale=False)
+        plt.figure(fig.number)
+        plt.plot([i,i],[-40,40])
+    plt.show()
+    """
+    #endregion
+
+    """Příprava pár disků na hildu"""
+    #region
+    """
     disk.fargo_read_fields(no = 4)
     disk.inner_outer_finish(outer_steps=500, inner_steps=500)
     disk.flat_relax(angular = 1, radial = 1000)
@@ -2288,9 +2389,7 @@ def main():
     image.makeImage(npix=300., wav=0.2, incl=0, phi=0., sizeau=80.)
     im = image.readImage()
     image.plotImage(im, au=True, log=True, maxlog=19, saturate=1, cmap=plt.cm.gist_heat, pltshow = True)
-
-    """Příprava pár disků na hildu"""
-    #region
+    """
     #endregion
 
     """Ukázka, že hustota klesne k nule mnoem rychleji, než naroste teplota a tedy adiabaticky disk je fajn"""
