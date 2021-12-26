@@ -866,7 +866,7 @@ class Disk():
             elif len(files) > 1: raise IOError("Optical depth error: Found multiple candidates for dustkappa file in current directory, please specify which file you'd like to use!")
             else: filename = files[0]
         wavs_kappas = np.loadtxt(filename, skiprows = 2, usecols = (0,1,2)) #v druhém sloupci je kappa_abs. Měl bych použít kappa scat? Idk idk
-        kappa = np.interp(wav, (wavs_kappas[0]+wavs_kappas[1])*cm*cm/gram, wavs_kappas[2])
+        kappa = np.interp(wav, wavs_kappas[:,0], (wavs_kappas[:,1]+wavs_kappas[:,2])*cm*cm/gram)
         depth = 0
         phi_index = index_before(array = self.phi_med[:], value = phi/180*np.pi)
 
@@ -888,7 +888,8 @@ class Disk():
             if how_close_to_equat is None: boundary = -10*au    #that's more or less infinity, right? :^)
             else: boundary = how_close_to_equat
 
-            depth, err = integrate.quad(integrand, boundary, 10*au, points = [-10*H, 0, 10*H])
+            depth, err = integrate.quad(integrand, boundary, 10*au, points = [-3*H, 0, 3*H])
+
             if message: print(f"Optical depth for wavelength {wav} microns along a line intersecting midplane at point r = {equatorial_r:.2f} au, phi = {phi} deg is {depth:.5e}")
         return depth
 
@@ -1183,9 +1184,9 @@ class Disk():
     ##radmc3D procedures
     ##ALL RADMC3D FILES NEED TO BE IN CGS, conversion happens at the end of each procedure tho
 
-    def set_theta_boundary(self, wanted_depth = 1, extra_margin = np.pi/10, wav = 870, thickness = f_z):
+    def set_theta_boundary(self, wanted_depth = .01, extra_margin = 0, thickness = f_z):
         """
-        Sets the theta boundary such that only the disk with at least sufficeint "wanted_depth" is included
+        Sets the theta boundary such that only the disk with at least sufficeint "wanted_depth" is included. Uses peak of stars spectrum
         Should be run BEFORE write density (obviously)
         --------------------
             Parameters:
@@ -1193,9 +1194,12 @@ class Disk():
         wanted_depth: double, smallest wanted depth such that this part of the disk is included
 
         extra_margin [rad]: margin on top of the wanted crop
-
-        wav [micron]: double, wavelenght at which to measure the optical depth
         """
+
+        # Find the wav at which to calculate tau. A good guess might be to look at mean temp of the disc
+    
+        b = 2897.771955 #microns per Kelvin via CODATA 2018
+        wav = b/np.mean(self.T) #in microns
 
         # I only look at the points with the highest scale theta atan(H/r); expecting those to have the largest tau
 
@@ -1233,9 +1237,9 @@ class Disk():
 
         self.par["Thetamin"] = highest_theta
 
-        print(f"Lower theta boundary cropped to {np.rad2deg(highest_theta)} deg")
+        print(f"Lower theta boundary cropped to {np.rad2deg(highest_theta):.2f} deg")
 
-    def radmc_write_dust_density(self, binary = True, thickness = f_z, nthet = 100, buffer_size = 4096, note = "", theta_min = np.pi*0.25):
+    def radmc_write_dust_density(self, binary = True, thickness = f_z, nthet = 100, buffer_size = 4096, note = ""):
         """
         Write dust_density.(b)inp file for radmc3D by thickening flat disk. The procedure will print progress percentage every 5 minutes starting after the first minute.
         --------------------
@@ -1255,8 +1259,6 @@ class Disk():
         buffer_size: int, max number of floats to be stored in RAM at any given point
 
         note: string, added as a second line of fig title
-
-        theta_min: float, lower theta bound. Useful if you don't need a bunch of cells in the „polar“ directions
         """
 
         
@@ -1289,9 +1291,8 @@ class Disk():
 
         #Update to theta boundaries is necessary
         self.par["Nthet"] = nthet
-        self.par["Thetamin"] = theta_min
-        self.par["Thetamax"] = np.pi/2
-        thetas = np.power(np.linspace(self.par["Thetamin"], self.par["Thetamax"]**3, num = nthet+1),1/3)
+        self.par["Thetamax"] = np.pi/2  #makes the eq plane a plane of symmetry
+        thetas = np.power(np.linspace(self.par["Thetamin"]**3, self.par["Thetamax"]**3, num = nthet+1),1/3)
 
         self.theta_inf = thetas[:-1]#np.linspace(self.par["Thetamin"], self.par["Thetamax"]-dtheta, self.par["Nthet"])
         self.theta_sup = thetas[1:]#np.linspace(self.par["Thetamin"]+dtheta, self.par["Thetamax"], self.par["Nthet"])
@@ -2107,6 +2108,7 @@ class Disk():
             for name, value in radmc_inp_params.items():
                 print(f"{name} = {value}", file = radmcinp)
         if gas_to_dust: self.gas_to_dust()
+        self.set_theta_boundary()
         self.radmc_write_dust_density(binary = binary, thickness = thickness, nthet=nthet, buffer_size=buffer_size)
         self.radmc_grid()
         self.radmc_wavelength()
@@ -2354,12 +2356,16 @@ def main():
     #region
     disk.fargo_read_fields(no=4)
     disk.inner_outer_finish()
-    disk.set_theta_boundary(wanted_depth = 0.5, extra_margin=np.deg2rad(5))
+    disk.flat_relax(angular = 100)
+    disk.set_theta_boundary(wanted_depth = .01, extra_margin=0)
+    disk.set_theta_boundary(wanted_depth = .001, extra_margin=0)
+    sleep(7)
     disk.radmc_write_inputs(nthet = 20)
+
     disk.radmc_read_density()
-    fig = plt.figure()
-    disk.plot_density_slice(fig = fig, show = False)
-    disk.plot_scale_height(fig = fig)
+    os.system("radmc3d mctherm")
+    disk.radmc_read_temperature()
+    disk.plot_T_slice()
     #endregion
 
     """obrazky T profilu pro broze"""
