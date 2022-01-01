@@ -10,6 +10,7 @@ References: ???
 import sys
 import numpy as np
 import matplotlib.pyplot as plt
+from numpy.core.numeric import identity
 try:
     from radmc3dPy import image
 except ImportError: print("radmc3dPy package not found! Image function via python won't work, you may need to call directly radmc3d image")
@@ -27,7 +28,7 @@ R_gas = 8.314462618     #[J·K⁻¹·mol⁻¹] CODATA 2018
 mu = 0.0024             #Mean molecualr weight in kg·mol⁻¹
 planck = 6.62607015e-34 #[J·s] CODATA 2018 
 k_B = 1.380649e-23      #[J·K⁻¹] CODATA 2018 
-light_speed = 299792458 #[m·s⁻¹] https://www.bipm.org/fr/measurement-units/si-defining-constants ???
+light_speed = 299792458 #[m·s⁻¹] CODATA 2018
 steff = 5.670374419e-8  #[W·m¯²K¯⁴] CODATA 2018
 
 __author__ = "Ondrej Janoska"
@@ -191,6 +192,9 @@ def f_z(h=0, sigma=0, T = 0, equatorial_r=0, M_star=M_sun, getH = False): #[SI]
     if getH: return H
     return sigma/np.sqrt(2*np.pi)/H*np.exp(-0.5*h*h/H/H)
 
+def identity_T(h=0, sigma=0, T = 0, equatorial_r=0, M_star=M_sun, getH = False):
+    return T
+
 def index_before(array = None, value = 0):
     """Returns the last index "i" at which monotically ascending "array" is smaller than "value" """
     if array is None:
@@ -350,6 +354,7 @@ class Disk():
             y_mesh = r_mesh*np.cos(theta_mesh)
 
             ax = fig.add_subplot(111)
+            ax.set_aspect('equal')
             if logarithmic_scale: 
                 import matplotlib.colors
                 ap = ax.pcolormesh(x_mesh, y_mesh, density.T, norm=matplotlib.colors.LogNorm(), cmap = "hot")
@@ -400,6 +405,7 @@ class Disk():
             y_mesh = r_mesh*np.cos(theta_mesh)
 
             ax = fig.add_subplot(111)
+            ax.set_aspect('equal')
             if logarithmic_scale: 
                 import matplotlib.colors
                 ap = ax.pcolormesh(x_mesh, y_mesh, Temp.T, norm=matplotlib.colors.LogNorm(), cmap = "hot")
@@ -665,7 +671,7 @@ class Disk():
         elif along.casefold() == "ray":
             if r_range is None:
                 start = 0
-                end = len(self.density[:,phi_index])-1
+                end = len(self.T[:,phi_index])-1
             else:
                 start = index_before(array = self.r_med, value = r_range[0])
                 end = index_before(array = self.r_med, value = r_range[1])
@@ -1184,7 +1190,7 @@ class Disk():
     ##radmc3D procedures
     ##ALL RADMC3D FILES NEED TO BE IN CGS, conversion happens at the end of each procedure tho
 
-    def set_theta_boundary(self, wanted_depth = .01, extra_margin = 0, thickness = f_z):
+    def set_theta_boundary(self, wanted_depth = .001, extra_margin = 0, thickness = f_z):
         """
         Sets the theta boundary such that only the disk with at least sufficeint "wanted_depth" is included. Uses peak of stars spectrum
         Should be run BEFORE write density (obviously)
@@ -1198,7 +1204,7 @@ class Disk():
 
         # Find the wav at which to calculate tau. A good guess might be to look at mean temp of the disc
     
-        b = 2897.771955 #microns per Kelvin via CODATA 2018
+        b = 2897.771955 #microns per Kelvin via CODATA 2018 Wien's displacement law
         wav = b/np.mean(self.T) #in microns
 
         # I only look at the points with the highest scale theta atan(H/r); expecting those to have the largest tau
@@ -1239,7 +1245,7 @@ class Disk():
 
         print(f"Lower theta boundary cropped to {np.rad2deg(highest_theta):.2f} deg")
 
-    def radmc_write_dust_density(self, binary = True, thickness = f_z, nthet = 100, buffer_size = 4096, note = ""):
+    def radmc_write_dust_density(self, binary = True, thickness = f_z, nthet = 100, buffer_size = 4096*32*40, note = ""):
         """
         Write dust_density.(b)inp file for radmc3D by thickening flat disk. The procedure will print progress percentage every 5 minutes starting after the first minute.
         --------------------
@@ -1416,7 +1422,7 @@ class Disk():
         print(f"Density notice: dust_density."+binary*f"b"+f"inp file was created using '{thickness.__name__}' function to make the disk thick. The total mass of the disk is now {total_mass/M_sun:.4e} M_sun and it took {(time.time()-start_time)/60:.2f} min")
         if total_mass/flat_mass > 4: print(f"Your new disk is {total_mass/flat_mass:.1f} more massive than its flat version. This could be caused by too rough of a discretisation in the theta direction. Consider using a higher 'steps' parameter when calling radmc_write_dust_density.")
 
-    def radmc_grid(self, style = 0): #, grid_type = 100, style = 0, x1min = 2.8, x1max=14, x2min = 0, x2max = np.pi, x3min = 0, x3max = 2*np.pi):
+    def radmc_write_grid(self, style = 0): #, grid_type = 100, style = 0, x1min = 2.8, x1max=14, x2min = 0, x2max = np.pi, x3min = 0, x3max = 2*np.pi):
         """
         Creates amr_grid.inp file for the radmc3d program. 
         --------------------
@@ -2050,7 +2056,7 @@ class Disk():
         if relax: self.flat_relax(radial = radial_relax, angular = angular_relax, log = log)
         self.inner_outer_finish(r2 = 30, r3 = 0.005)
         self.radmc_write_dust_density(binary = True, nthet = nthet, buffer_size=buffer)
-        self.radmc_grid()
+        self.radmc_write_grid()
         os.system('radmc3d mctherm')
         image.makeImage(npix=npix, wav=wav, incl=incl, phi=phi, sizeau=sizeau)
         im = image.readImage()
@@ -2058,7 +2064,7 @@ class Disk():
         image.plotImage(im, au=True, log=True, maxlog=13, saturate=1e-7, cmap=plt.cm.get_cmap("gist_heat"))
         return [(time.time()-start_time)/60/60, radial_relax, 2*nthet, angular_relax]
 
-    def radmc_write_inputs(self, mrw = None, thickness = f_z, nthet = 100, binary = True, buffer_size = 4096, gas_to_dust = True, **kwargs):
+    def radmc_write_inputs(self, mrw = None, thickness = f_z, nthet = 100, binary = True, buffer_size = 4096*32, gas_to_dust = True, **kwargs):
         """
         Creates all the necessary files for running radmc3d script
         --------------------
@@ -2093,7 +2099,7 @@ class Disk():
             "itempdecoup": 1,   #all dust species are thermally independet
             "lines_mode": -1,   #default, needs extra files to work properly
             "modified_random_walk": int(mrw),   #if 1 and if photon is stuck for too long in a cell, the probability of where it will exit is calculated and the photon is transported there
-            "nphot": 1000000,    #number of photons for thermal siulation
+            "nphot": 100000000,    #number of photons for thermal siulation
             "nphot_scat": 300000,   #number of photons for image-making
             "nphot_spec": 100000,   #number of photons for spectra-making
             "rto_style": 3,     #1 for output files to be ascii, 3 for binary, 2 for pain (old and as of now obsolete fortran format)
@@ -2110,30 +2116,155 @@ class Disk():
         if gas_to_dust: self.gas_to_dust()
         self.set_theta_boundary()
         self.radmc_write_dust_density(binary = binary, thickness = thickness, nthet=nthet, buffer_size=buffer_size)
-        self.radmc_grid()
+        self.radmc_write_grid()
         self.radmc_wavelength()
         self.radmc_stars()
         self.radmc_write_opacity()
 
-    def radmc_write_temperature(self, binary=True, note = ""):
+    def radmc_write_temperature(self, binary=True, note = "", nthet = 100, buffer_size = 4096*32*40, thickness = identity_T):
         """
         Creates dust_temperature.inp from fargo temperature data for image making.
         """
-        nrspecs = 1
-        nrcells = np.size(self.T)
-        if binary: 
-            file = open(note+"dust_temperature.bdat", "wb")
-            header = np.array([1, 8, nrcells, nrspecs])
-            header.tofile(file)
-            np.transpose(self.T, (2,1,0)).tofile(file)
-        else:
-            file = open(note+"dust_temperature.dat", "w")
-            header = np.array([1, nrcells, nrspecs])
-            header.tofile(file, sep = "\n")
-            file.write("\n")
-            np.transpose(self.T, (2,1,0)).tofile(file, sep = "\n")
-        a = np.fromfile("dust_temperature.bdat", dtype = np.double, offset = 4*8)
-        pass
+        if self.T.ndim == 3:
+            nrspecs = 1
+            nrcells = np.size(self.T)
+            if binary: 
+                file = open(note+"dust_temperature.bdat", "wb")
+                header = np.array([1, 8, nrcells, nrspecs])
+                header.tofile(file)
+                np.transpose(self.T, (2,1,0)).tofile(file)
+            else:
+                file = open(note+"dust_temperature.dat", "w")
+                header = np.array([1, nrcells, nrspecs])
+                header.tofile(file, sep = "\n")
+                file.write("\n")
+                np.transpose(self.T, (2,1,0)).tofile(file, sep = "\n")
+            a = np.fromfile("dust_temperature.bdat", dtype = np.double, offset = 4*8)
+
+        elif self.T.ndim == 2:
+            #Creating 3D grid out of 2D disk seed
+            print(f"Density notice: writing a dust_temperature."+binary*f"b"+f"inp for radmc3d, a total of {len(self.r_med)}×{nthet}×{len(self.phi_med)} = {np.size(self.T)*nthet} cells...")
+            nrspecs = 1  # number of dust species
+            nrcells = np.size(self.T)*nthet
+
+            #Update to theta boundaries is necessary
+            self.par["Nthet"] = nthet
+            self.par["Thetamax"] = np.pi/2  #makes the eq plane a plane of symmetry
+            thetas = np.power(np.linspace(self.par["Thetamin"]**3, self.par["Thetamax"]**3, num = nthet+1),1/3)
+
+            self.theta_inf = thetas[:-1]#np.linspace(self.par["Thetamin"], self.par["Thetamax"]-dtheta, self.par["Nthet"])
+            self.theta_sup = thetas[1:]#np.linspace(self.par["Thetamin"]+dtheta, self.par["Thetamax"], self.par["Nthet"])
+            self.theta_med = 0.5*(self.theta_inf+self.theta_sup)#np.linspace(self.par["Thetamin"]+0.5*dtheta, self.par["Thetamax"]-0.5*dtheta, self.par["Nthet"])
+
+            total_mass = 0
+
+            buffer_size = int(buffer_size/40)    #there are total of 40 arrays of size "buffer_size" used at once later, so the number has to be adjusted to correctly represent the amount of mermory the arrays take up
+            if binary:
+                outfile = open("dust_temperature.bdat"+note,"wb")
+                np.array([1,8,nrcells,nrspecs]).tofile(outfile) #Necessary parameters for radmc3d: 1 (always present), 8(# of bytes),…
+                timer = time.time()+60
+                for phi_index in range(len(self.phi_med)):
+                    for theta_index, theta in enumerate(self.theta_med):
+                        cont = False
+                        first_index = 0
+                        last_index = buffer_size
+                        while not cont:
+                            if last_index > len(self.r_med)-1:                                                  #              .·z3
+                                last_index = len(self.r_med)                                                    #          .·      ·
+                                cont = True                                                                     #      .·           .
+                            rs = self.r_med[first_index:last_index]                                             #   .·               .
+                            equatorial_rs = np.sin(theta)*rs                                                    #z4·       o<—z       . <— elementary volume from the side
+                            equatorial_r1s = np.sin(self.theta_sup[theta_index])*rs                             #  ·                  ·
+                            equatorial_r2s = np.sin(self.theta_sup[theta_index])*rs                             #    ·                . 
+                            equatorial_r3s = np.sin(self.theta_inf[theta_index])*rs                             #     .          ____.z2
+                            equatorial_r4s = np.sin(self.theta_inf[theta_index])*rs                             #       z1..———̅ 
+                            zs = np.cos(theta)*rs                                                               #Average T from points z through z4 is saved       
+                            z1s = self.r_inf[first_index:last_index]*np.cos(self.theta_sup[theta_index])        
+                            z2s = self.r_sup[first_index:last_index]*np.cos(self.theta_sup[theta_index])        
+                            z3s = self.r_sup[first_index:last_index]*np.cos(self.theta_inf[theta_index])        
+                            z4s = self.r_inf[first_index:last_index]*np.cos(self.theta_inf[theta_index])
+                            interpolated_Ts =  np.interp(equatorial_rs,  self.r_med, self.T[:,phi_index])   
+                            interpolated_T1s = np.interp(equatorial_r1s, self.r_med, self.T[:,phi_index])   
+                            interpolated_T2s = np.interp(equatorial_r2s, self.r_med, self.T[:,phi_index])        
+                            interpolated_T3s = np.interp(equatorial_r3s, self.r_med, self.T[:,phi_index])   
+                            interpolated_T4s = np.interp(equatorial_r4s, self.r_med, self.T[:,phi_index])   
+                            interpolated_sigmas =  np.interp(equatorial_rs,  self.r_med, self.density[:,phi_index])
+                            interpolated_sigma1s = np.interp(equatorial_r1s, self.r_med, self.density[:,phi_index])
+                            interpolated_sigma2s = np.interp(equatorial_r2s, self.r_med, self.density[:,phi_index])
+                            interpolated_sigma3s = np.interp(equatorial_r3s, self.r_med, self.density[:,phi_index])
+                            interpolated_sigma4s = np.interp(equatorial_r4s, self.r_med, self.density[:,phi_index])
+                            temps  = thickness(h =  zs*au, sigma = interpolated_sigmas,  T = interpolated_Ts,  equatorial_r=equatorial_rs*au,  M_star= self.par["M_star"][0])
+                            temp1s = thickness(h = z1s*au, sigma = interpolated_sigma1s, T = interpolated_T1s, equatorial_r=equatorial_r1s*au, M_star= self.par["M_star"][0])
+                            temp2s = thickness(h = z2s*au, sigma = interpolated_sigma2s, T = interpolated_T2s, equatorial_r=equatorial_r2s*au, M_star= self.par["M_star"][0])
+                            if theta_index != 0:
+                                temp3s = thickness(h = z3s*au, sigma = interpolated_sigma3s, T = interpolated_T3s, equatorial_r=equatorial_r3s*au, M_star= self.par["M_star"][0])
+                                temp4s = thickness(h = z4s*au, sigma = interpolated_sigma4s, T = interpolated_T4s, equatorial_r=equatorial_r4s*au, M_star= self.par["M_star"][0])
+                                average_temps = (temps+temp1s+temp2s+temp3s+temp4s)/5
+                            else: average_temps = (temps+temp1s+temp2s)/3
+
+                            average_temps.tofile(outfile)
+                            if cont: break
+                            first_index, last_index = last_index, last_index + buffer_size
+
+                    if time.time()>timer:
+                        print(f"{phi_index/(len(self.phi_med)-1)*100:.2f} % done")
+                        timer += 300
+
+            else:
+                outfile = open("dust_temperature.dat" + note,"w")
+                np.array([1,nrcells,nrspecs]).tofile(outfile, sep = "\n") #Necessary parameters for radmc3d: 1 (always present)…
+                outfile.write("\n")
+                timer = time.time()+60
+                for phi_index in range(len(self.phi_med)):
+                    for theta_index, theta in enumerate(self.theta_med):
+                        cont = False
+                        first_index = 0
+                        last_index = buffer_size
+                        while not cont:
+                            if last_index > len(self.r_med)-1:                                                  #              .·z3
+                                last_index = len(self.r_med)                                                    #          .·      ·
+                                cont = True                                                                     #      .·           .
+                            rs = self.r_med[first_index:last_index]                                             #   .·               .
+                            equatorial_rs = np.sin(theta)*rs                                                    #z4·       o<—z       . <— elementary volume from the side
+                            equatorial_r1s = np.sin(self.theta_sup[theta_index])*rs                             #  ·                  ·
+                            equatorial_r2s = np.sin(self.theta_sup[theta_index])*rs                             #    ·                . 
+                            equatorial_r3s = np.sin(self.theta_inf[theta_index])*rs                             #     .          ____.z2
+                            equatorial_r4s = np.sin(self.theta_inf[theta_index])*rs                             #       z1..———̅ 
+                            zs = np.cos(theta)*rs                                                               #Average T from points z through z4 is used       
+                            z1s = self.r_inf[first_index:last_index]*np.cos(self.theta_sup[theta_index])        
+                            z2s = self.r_sup[first_index:last_index]*np.cos(self.theta_sup[theta_index])        
+                            z3s = self.r_sup[first_index:last_index]*np.cos(self.theta_inf[theta_index])        
+                            z4s = self.r_inf[first_index:last_index]*np.cos(self.theta_inf[theta_index])
+                            interpolated_Ts =  np.interp(equatorial_rs,  self.r_med, self.T[:,phi_index])   
+                            interpolated_T1s = np.interp(equatorial_r1s, self.r_med, self.T[:,phi_index])   
+                            interpolated_T2s = np.interp(equatorial_r2s, self.r_med, self.T[:,phi_index])        
+                            interpolated_T3s = np.interp(equatorial_r3s, self.r_med, self.T[:,phi_index])   
+                            interpolated_T4s = np.interp(equatorial_r4s, self.r_med, self.T[:,phi_index])   
+                            interpolated_sigmas =  np.interp(equatorial_rs,  self.r_med, self.density[:,phi_index])
+                            interpolated_sigma1s = np.interp(equatorial_r1s, self.r_med, self.density[:,phi_index])
+                            interpolated_sigma2s = np.interp(equatorial_r2s, self.r_med, self.density[:,phi_index])
+                            interpolated_sigma3s = np.interp(equatorial_r3s, self.r_med, self.density[:,phi_index])
+                            interpolated_sigma4s = np.interp(equatorial_r4s, self.r_med, self.density[:,phi_index])
+                            temps  = thickness(h =  zs*au, sigma = interpolated_sigmas,  T = interpolated_Ts,  equatorial_r=equatorial_rs*au,  M_star= self.par["M_star"][0])
+                            temp1s = thickness(h = z1s*au, sigma = interpolated_sigma1s, T = interpolated_T1s, equatorial_r=equatorial_r1s*au, M_star= self.par["M_star"][0])
+                            temp2s = thickness(h = z2s*au, sigma = interpolated_sigma2s, T = interpolated_T2s, equatorial_r=equatorial_r2s*au, M_star= self.par["M_star"][0])
+                            if theta_index != 0:
+                                temp3s = thickness(h = z3s*au, sigma = interpolated_sigma3s, T = interpolated_T3s, equatorial_r=equatorial_r3s*au, M_star= self.par["M_star"][0])
+                                temp4s = thickness(h = z4s*au, sigma = interpolated_sigma4s, T = interpolated_T4s, equatorial_r=equatorial_r4s*au, M_star= self.par["M_star"][0])
+                                average_temps = (temps+temp1s+temp2s+temp3s+temp4s)/5
+                            else: average_temps = (temps+temp1s+temp2s)/3
+
+                            average_temps.tofile(outfile, sep = "\n", format="%.9e")
+                            outfile.write("\n")
+
+                            first_index, last_index = last_index, last_index + buffer_size
+
+                    if time.time()>timer:
+                        print(f"{phi_index/(len(self.phi_med)-1)*100:.2f} % done")
+                        timer += 300
+
+            outfile.close()
+
 
     def radmc_read_temperature(self, isbinary = None, filename = None):
         """
@@ -2331,6 +2462,78 @@ def main():
     """Test program for the Disk class"""
     disk = Disk()
 
+    """disc of fargo temp"""
+    #region
+    disk.fargo_read_fields(no = 4)
+    #disk.inner_outer_finish()
+    fig = plt.figure()
+    disk.plot_density_profile(fig = fig, show=False, label = "pre writing and pre relax")
+    disk.flat_relax(angular=20, radial = 500)
+    disk.plot_density_profile(fig = fig, show=False, label = "pre writing but after relax")
+
+    mrw = 0
+    radmc_inp_params = {
+        "istar_sphere": 1,  #whether to take star as a sphere (1) or a point (0)
+        "itempdecoup": 1,   #all dust species are thermally independet
+        "lines_mode": -1,   #default, needs extra files to work properly
+        "modified_random_walk": int(mrw),   #if 1 and if photon is stuck for too long in a cell, the probability of where it will exit is calculated and the photon is transported there
+        "nphot": 100000000,    #number of photons for thermal siulation
+        "nphot_scat": 300000,   #number of photons for image-making
+        "nphot_spec": 100000,   #number of photons for spectra-making
+        "rto_style": 3,     #1 for output files to be ascii, 3 for binary, 2 for pain (old and as of now obsolete fortran format)
+        "scattering_mode_max": 1,   #if 1, radmc3d ignore anisotropic scattering (it's not like I provided it in the opacity files anyway)
+        "tgas_eq_tdust": 1, #if 1, gas temperature will be the same as the first dust species' temp
+    }
+
+    with open("radmc3d.inp", "w") as radmcinp:
+        for name, value in radmc_inp_params.items():
+            print(f"{name} = {value}", file = radmcinp)
+    disk.gas_to_dust()
+    disk.set_theta_boundary()
+    nthet = 30
+    disk.radmc_write_dust_density(nthet = nthet)
+    disk.radmc_write_temperature(nthet = nthet, binary = False)
+    disk.radmc_write_grid()
+    disk.radmc_wavelength()
+    disk.radmc_stars()
+    disk.radmc_write_opacity()
+
+    disk.radmc_read_temperature()
+    #disk.plot_T_profile(fig = fig, show = False, label="after write")
+    plt.legend()
+    plt.show()
+    #endregion
+    input()
+
+
+    """aftersim plotting"""
+    #region
+    """
+    disk.fargo_read_fields(no=4)
+    fig = plt.figure()
+    disk.plot_T_profile(fig = fig, show = False, label = "temp from fargo")
+
+    disk.radmc_read_grid()
+    disk.radmc_read_temperature()
+    
+    disk.plot_T_profile(fig = fig, show = False, label = "temp from radmc", logarithmic_scale=True)
+    plt.legend()
+    plt.show()
+    disk.plot_T_slice(logarithmic_scale=True)
+    #disk.plot_T_slice(logarithmic_scale=True)
+    """
+    #endregion
+
+    """some discs for hilda again"""
+    #region
+    """
+    disk.fargo_read_fields(no=4)
+    disk.inner_outer_finish(outer_steps=300)
+    disk.flat_relax(radial=500, angular = 300)
+    disk.radmc_write_inputs()
+    """
+    #endregion
+
     """casova narocnost"""
     #region
     #import cProfile
@@ -2354,18 +2557,17 @@ def main():
 
     """test theta crop"""
     #region
+    """
     disk.fargo_read_fields(no=4)
     disk.inner_outer_finish()
     disk.flat_relax(angular = 100)
-    disk.set_theta_boundary(wanted_depth = .01, extra_margin=0)
-    disk.set_theta_boundary(wanted_depth = .001, extra_margin=0)
-    sleep(7)
     disk.radmc_write_inputs(nthet = 20)
 
     disk.radmc_read_density()
     os.system("radmc3d mctherm")
     disk.radmc_read_temperature()
     disk.plot_T_slice()
+    """
     #endregion
 
     """obrazky T profilu pro broze"""
@@ -2423,7 +2625,7 @@ def main():
     #disk.plot_fargo_gastemper(Mean=False)
     disk.flat_relax(angular = nphi, radial = nrad)
     disk.radmc_write_dust_density(nthet = nthet)
-    disk.radmc_grid()
+    disk.radmc_write_grid()
 
     for iteration in range(3):
         os.system('radmc3d mctherm setthreads 4 countwrite 100000')
@@ -2581,7 +2783,6 @@ def main():
     
 
 ## TO DO:
-##zkus upravit hustotu na různý kopečky a mezery a tak
 #zkus vygrafit u planety teploty
 #hermitova interpolace
 #vypočítej si hodně zhruba rozšíření čáry
@@ -2589,8 +2790,7 @@ def main():
 #alma ost?
 #přes spectrum plancka (černý těleso ve správný vzdálenosti, intenzita )
 
-##Jansky jednotky
-##metalicita pro prach a plyn — pro opacitu neni od věci přenásobit siguḿu 0.01
+#přenásobit siguḿu 0.01
 ##  flock 2013?
 ##udělej jako fci možná r možná T (lepčí), we'll see
 
@@ -2601,9 +2801,6 @@ def main():
 
 
 #normuj hustotou!!!!!! (najít spodní limit pro kdy je viskozita dulezita)
-
-
-
 
 
 
