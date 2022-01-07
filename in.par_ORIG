@@ -1,0 +1,101 @@
+### Disk parameters
+
+AspectRatio             0.05            standard, supposed to be relaxed by flaring processes
+Viscosity               1.12214e-5      5.0e14 cm^2/s
+SigmaSlope              0.5             surf.dens. power-law decrease
+FlaringIndex            0.0             will evolve during the relaxation
+Sigma0                  8.4375e-5       750 g/cm^2 at 1 AU
+
+### Energy equation setup
+
+EnergyEquation          YES             choose No for an isothermal eq. of state
+Adiabind                1.4             Default value: 1.4
+MolWeight               1.0
+GasConst                1.0
+CoolingTime             -1.0            set cooling time at r=1, set zero or negative value to switch the parametric cooling off
+RadiativeDiffusion      YES             choose Yes to include radiative diffusion
+StellarIrradiation      YES
+OpacityDrop		0.6
+EffectiveTemperature    4370.0          protostar's temperature in Kelvins
+StellarRadius           1.5             protostar's radius in solar radii
+DiscAlbedo              0.5
+WriteTemperature        YES             Yes is default if EnergyEquation=Yes is chosen
+WriteEnergy             No
+WriteDivV               No
+WriteQplus              No
+WriteQbalance           No
+
+### HD field initialization from files
+### (useful to start with an equilibrium disc)
+
+InitializeFromFile      YES
+DensInfile              in/gasdens.cfg
+VradInfile              in/gasvrad.cfg
+VthetaInfile            in/gasvtheta.cfg
+TemperInfile            in/gastemper.cfg
+
+### Planet parameters
+
+PlanetConfig            in/embryos.cfg
+ThicknessSmoothing      0.6             Softening parameters in disk thickness
+ExcludeHill             NO              WARNING - the choice of YES or NO should depend on the planetary masses
+
+### Numerical method parameters
+
+Transport               FARGO
+InnerBoundary           DAMPING         Can be RIGID, OPEN, NONREFLECTING, DAMPING
+DampTowards             INIT		INIT or ZEROVRAD
+DampingRminFrac		1.2
+DampingRmaxFrac		0.9
+DampingPeriodFrac	0.1
+Disk                    YES
+OmegaFrame              0.0
+Frame                   Fixed
+IndirectTerm            YES
+
+### Mesh parameters
+
+Nrad                    1024            Radial number of zones
+Nsec                    1536            Azimuthal number of zones (sectors)
+Rmin                    2.8             Inner boundary radius
+Rmax                    14.0            Outer boundary radius
+RadialSpacing           Arithmetic      Zone interfaces evenly spaced
+
+### Output control parameters
+
+Ntot                    80000		t = 80 000 * 3.725 / 2pi ~= 47 kyr
+Ninterm                 100		Ntot/Ninterm outputs
+DT                      3.725		1/20 of orbital period at 5.2au
+OutputDir               out
+
+###
+NoutElements            20		output each orbit at 5.2au
+WriteTorqueFiles        YES
+PlanetaryDensity        3.0
+ResolveCollisions       YES
+TargetNPL               0
+PlanetsFeelDisk         YES
+AccretionRate           0.0
+HillCut                 0.8             Parameter of the tapering function from Crida et al. (2008)
+VerticalDamping         0.3             Factorization of the Tanaka & Ward (2004) formula (see also Morby et al. 2007), has to be TUNED!
+IAS15Precission		1.e-9
+IAS15MinDT		0.0
+
+###
+PebbleAccretion         YES
+BackReaction            YES
+AccretionalHeating      YES
+ParticleDiffusion	YES
+WriteEta                NO
+MeassureFiltering	NO
+PebbleFlux		0.0002
+PebbleAlpha             0.0001          ??? careful with this, should be the same as gas alpha
+SchmidtNumber		1.0
+PebbleCoagulation       0.5
+PebbleBulkDens		1.0
+
+###
+TorqueMapInfile		NO
+AccretionDetails	NO
+GetTorqueForPlanet	-1
+

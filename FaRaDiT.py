@@ -30,6 +30,7 @@ planck = 6.62607015e-34 #[J·s] CODATA 2018
 k_B = 1.380649e-23      #[J·K⁻¹] CODATA 2018 
 light_speed = 299792458 #[m·s⁻¹] CODATA 2018
 steff = 5.670374419e-8  #[W·m¯²K¯⁴] CODATA 2018
+sol_rad = 6.957e8       #[m] IAU 2015 https://arxiv.org/pdf/1510.07674.pdf
 
 __author__ = "Ondrej Janoska"
 __version__ = "May 29th 2021"
@@ -247,10 +248,11 @@ class Disk():
         'Nsec' : 1536,  #Number of angular sectors
         'Nthet': 0,     #Number of sectors in the theta direction
         'Thetamin' : 0,
-        'Thetamax' : np.pi,
+        'Thetamax' : 0.5*np.pi,
         'grid_type' : 100, #grid_type: 0 ⇒ cartesian, 100 ⇒ spherical
         'M_star' : np.array([2.1*M_sun]), #Mass of the star(s) in kg
-        'Star_temp': 4000, #surface temperature of the star in K
+        'EffectiveTemperature': 4370, #surface temperature of the star in K
+        'StellarRadius': 1, #radius of the star in Solar radii
         }
 
         self.Rmin = 2.8   #Boundary of the disk in au
@@ -909,8 +911,12 @@ class Disk():
 
     ##Input procedures
 
-    def fargo_input(self, filename):
+    def fargo_input(self, filename = None):
         """Read Fargo input file in.par"""
+        if filename is None:
+            import glob
+            filename = glob.glob("in.par*")[0]
+            print(f"Found parameter file {filename}, I'm loading it...")
         with open(filename, 'r') as file:
             for line in file:
                 if '#' not in line:
@@ -926,6 +932,14 @@ class Disk():
                     except Exception: pass
                     if is_number(value): self.par.update({f'{name}' : float(value)})
                     else: self.par.update({f'{name}' : value})
+        try:
+            self.Rmin = self.par["Rmin"]
+        except IndexError:
+            pass 
+        try:
+            self.Rmax = self.par["Rmax"]
+        except IndexError:
+            pass 
 
     def fargo_read_field(self, filename):
         """Read 1 Fargo binary file == field;
@@ -974,7 +988,7 @@ class Disk():
 
         print(f"Loaded files gasdens{no}.dat and gastemper{no}.dat. Total mass of the disk is {self.total_mass:.4e} M_sun")
 
-    def flat_relax(self, angular = 4, radial = 100, log = True):
+    def flat_relax(self, angular = 4, radial = 512, log = True):
         r"""
         Reduces the amount of angular and radial sectors in the disk.
         --------------------
@@ -1004,7 +1018,97 @@ class Disk():
 
         """
         print(f"Relaxing disk...")
+
+        ### THIS WHOLE PROCEDURE IS WRONG! just try relaxing it to a large number of radial sectors and plot pre and post temperature in r
+
+        if radial not in [2**i for i in range(13)]:
+            raise ValueError(f"Relax error: only powers of 2 up to 1024 are allowed for radial relax! {radial} not allowed")
+        if angular not in [2**i for i in range(10)] and angular//3 not in [2**i for i in range(10)]:
+            raise ValueError(f"Relax error: only powers of 2 up to 512 and their multiples of 3 are allowed for radial relax! {angular} not allowed")
+
+        newsigma = self.density[:]
+        newT = self.T[:]
+        Nrad = self.par["Nrad"]
+        Nsec = self.par["Nsec"]
+
+        if angular != 0:
+            new_phis = np.linspace(self.Phimin, self.Phimax, num = 2*angular+1)
+            self.phi_inf = new_phis[0:-1:2]
+            self.phi_med = new_phis[1::2]
+            self.phi_sup = new_phis[2::2]
+
+        if radial != 0:
+                new_rs = np.linspace(self.Rmin, self.Rmax, num = 2*radial+1)
+                self.r_inf = new_rs[0:-1:2]
+                self.r_med = new_rs[1::2]
+                self.r_sup = new_rs[2::2]
+
+        if angular != 0:
+            newsigma = newsigma.T.reshape(-1, Nsec//angular, newsigma.T.shape[1]).mean(axis = 1).T
+            newT = newT.T.reshape(-1, Nsec//angular, newT.T.shape[1]).mean(axis = 1).T
+
+        if radial != 0:
+            newsigma = newsigma.reshape(-1, Nrad//radial, newsigma.shape[1]).mean(axis = 1)
+            newT = newT.reshape(-1, Nrad//radial, newT.shape[1]).mean(axis = 1)
+
+        if log:
+            new_rs = np.logspace(np.log10(self.Rmin), np.log10(self.Rmax), num = 2*radial+1)
+
+            new_r_inf = new_rs[0:-1:2]
+            new_r_med = new_rs[1::2]
+            new_r_sup = new_rs[2::2]
+
+            newsigma = np.array([np.interp(new_r_med, self.r_med, newsigma[:,i]) for i in range(len(self.phi_med))]).T
+            newT = np.array([np.interp(new_r_med, self.r_med, newT[:,i]) for i in range(len(self.phi_med))]).T
+
+            self.r_inf = new_r_inf
+            self.r_med = new_r_med
+            self.r_sup = new_r_sup
+
+        self.density = newsigma
+        self.T = newT
+
+        self.par["Nrad"] = Nrad = radial
+        self.par["Nsec"] = Nsec = angular
         
+        phi_distances = np.outer(self.r_med, 2*np.sin(self.phi_sup-self.phi_med))
+
+        r_minmax = [np.min(self.r_sup - self.r_inf), np.max(self.r_sup - self.r_inf)]
+        phi_minmax = [np.min(phi_distances), np.max(phi_distances)]
+
+        print(f"Flat disk relaxed to "+ f"a log grid "*log + f"with a total of {Nrad} radial and {Nsec} angular sectors. Cells are now between {r_minmax[0]:.1e} and {r_minmax[1]:.1e} au wide in radial and between {phi_minmax[0]:.1e} and {phi_minmax[1]:.1e} au in angular directions")
+
+        #region
+        """
+        #you damn bufoon ur just using the points not their means lol
+        from scipy.interpolate import RectBivariateSpline as spline
+        areas = np.matmul(np.array([self.phi_sup-self.phi_inf]).T, [(self.r_sup*self.r_sup-self.r_inf*self.r_inf)*au*au]).T
+        
+        spline_newsigma = spline(self.r_med, self.phi_med, self.density*areas, kx = 1, ky = 1)  #more like mass
+        spline_newT = spline(self.r_med, self.phi_med, self.T)
+        """
+
+
+        """
+        r_mesh_new, phi_mesh_new = np.meshgrid(new_r_med, new_phi_med)
+
+        print(self.r_inf[0], self.r_sup[0])
+        print(spline_newsigma(2.8*au, 0))
+        print(f"{spline_newsigma.integral(self.r_inf[0], self.r_sup[0], self.phi_inf[0], self.phi_sup[0]):.10e}")
+
+        newsigma = np.array([[spline_newsigma.integral(r_inf, r_sup, phi_inf, phi_sup)/(areas) for phi_inf, phi_sup in zip(new_phi_inf, new_phi_sup)] for r_inf, r_sup in zip(new_r_inf, new_r_sup)])
+
+        newsigma[900, 0]
+        
+        self.T = newT(new_phi_med, new_r_med)
+
+        print(np.shape(self.T))
+        self.T = np.reshape(self.T, (len(new_r_med), len(new_phi_med)))
+        self.density = np.reshape(self.density, (len(new_r_med), len(new_phi_med)))
+        """
+
+        """
+
         Nrad = self.par["Nrad"]
         Nsec = self.par["Nsec"]
 
@@ -1025,12 +1129,12 @@ class Disk():
             new_phi_sup = new_phis[2::2]
             phi_pad = angular - Nsec%angular
             Nsec += phi_pad
-            newsigma = np.pad(newsigma, ((0,0),(0,phi_pad)), 'edge') #'constant', constant_values = np.nan)
+            newsigma = np.pad(newsigma, ((0,0),(0,phi_pad)), 'wrap') #'constant', constant_values = np.nan)
             newsigma = newsigma.reshape(Nrad, int(Nsec/angular), angular)
             newsigma = np.mean(newsigma, axis = 1)
             newsigma = newsigma.reshape(Nrad, angular)
 
-            newT = np.pad(newT, ((0,0),(0,phi_pad)), 'edge') #'constant', constant_values = np.nan)
+            newT = np.pad(newT, ((0,0),(0,phi_pad)), 'wrap') #'constant', constant_values = np.nan)
             newT = newT.reshape(Nrad, int(Nsec/angular), angular)
             newT = np.mean(newT, axis = 1)
             newT = newT.reshape(Nrad, angular)
@@ -1081,19 +1185,21 @@ class Disk():
                 Nrad = radial
                 self.par["Nrad"] = Nrad
 
-        self.density = newsigma
-        self.T = newT
+        Nsec = angular
+        self.par["Nsec"] = Nsec
+        Nrad = radial
+        self.par["Nrad"] = Nrad
+        """
+        #endregion
 
-        print(f"Flat disk relaxed to "+ f"a log grid "*log + f"with a total of {Nrad} radial and {Nsec} angular sectors" )
-
-    def inner_outer_finish(self, outer_steps = 100, inner_steps = 100, r_newmax = 80, r_newmin = 1.001*1.392000000e+11*cm/au, smoothing = 5, r1 = 0.1, r2 = 15, r3 = 0.1):
+    def inner_outer_finish(self, outer_steps = 512, inner_steps = 512, r_newmax = 40, r_newmin = None, smoothing = 5, r1 = 0.1, r2 = 3, r3 = 0.1):
         """
         Finishes inner and outer parts of the flat disk using funcions
         sigma(r) = g(r) = exp(-(r1/r)**2.0) and
         T(r) = u(r) = 500
         for the inner part,
-        sigma(r) = h(r) = exp(-((r-self.Rmax)/r2)**1.0)
-        T(r) = v(r) = exp(-((r-self.Rmax)/r2)**1.0)
+        sigma(r) = h(r) = exp(-((r-self.Rmax)/r2)**2.0)
+        T(r) = v(r) = exp(-((r-self.Rmax)/r2)**2.0)
         for the outer part. Blends original disk with these functions using the power_smooth_min function.
         --------------------
         Parameters:
@@ -1110,20 +1216,24 @@ class Disk():
 
             r1, r2, r3: float, parameters for finishing functions, see above
         """
+        if (len(self.r_med) + inner_steps + outer_steps) not in [2**i for i in range(13)]:
+            print("WARNING: The new disc doesn't have a power of 2 of radial sectors. You won't be able to relax it!")
+
+        if r_newmin is None: r_newmin = 1.1*self.par["StellarRadius"]*sol_rad/au
 
         def f(r):   #funciton mimicing the disk's sigma
             return r**(-0.5)
         def g(r):   #function taking care of sigma's fading as it gets to the center
             return np.exp(-(r1/r)**2.0)
         def h(r):   #function taking care of sigma's fading as it gets towards the outer rim
-            return np.exp(-((r-self.Rmax)/r2)**1.0)
+            return np.exp(-((r-self.Rmax)/r2)**2.0) #inspired by https://iopscience.iop.org/article/10.1088/0004-637X/741/1/3
 
         def t(r):   #function mimicing the disk's T
             return r**(-0.5)
         def u(r):   #function taking care of temperature's profile as it gets to the center
             return 0*r+500
         def v(r):   #function taking care of temperature's fading as it gets towards the outer rim
-            return np.exp(-((r-self.Rmax)/r2)**1.0)
+            return np.exp(-((r-self.Rmax)/r2)**2.0)
 
 
         #Here starts the finishing of the inner part of the disk      
@@ -1422,6 +1532,17 @@ class Disk():
         print(f"Density notice: dust_density."+binary*f"b"+f"inp file was created using '{thickness.__name__}' function to make the disk thick. The total mass of the disk is now {total_mass/M_sun:.4e} M_sun and it took {(time.time()-start_time)/60:.2f} min")
         if total_mass/flat_mass > 4: print(f"Your new disk is {total_mass/flat_mass:.1f} more massive than its flat version. This could be caused by too rough of a discretisation in the theta direction. Consider using a higher 'steps' parameter when calling radmc_write_dust_density.")
 
+        phi_distances = np.multiply.outer(self.r_med, 2*np.sin(self.phi_sup-self.phi_med))
+        phi_distances = np.multiply.outer(phi_distances, np.sin(self.theta_med))
+        theta_distances = np.multiply.outer(self.r_med, 2*np.sin(self.theta_med-self.theta_inf))
+        r_distances = self.r_sup-self.r_inf
+
+        r_minmax = [np.min(r_distances), np.max(r_distances)]
+        phi_minmax = [np.min(phi_distances), np.max(phi_distances)]
+        theta_minmax = [np.min(theta_distances), np.max(theta_distances)]
+
+        print(f"The mesh now has side lengths between\n{r_minmax[0]:.1e} au and {r_minmax[1]:.1e} au in the r direction\n{theta_minmax[0]:.1e} au and {theta_minmax[1]:.1e} au in the theta direction\n{phi_minmax[0]:.1e} au and {phi_minmax[1]:.1e} au in the phi direction")
+
     def radmc_write_grid(self, style = 0): #, grid_type = 100, style = 0, x1min = 2.8, x1max=14, x2min = 0, x2max = np.pi, x3min = 0, x3max = 2*np.pi):
         """
         Creates amr_grid.inp file for the radmc3d program. 
@@ -1456,7 +1577,7 @@ class Disk():
 
         print("Grid notice: amr_grid.inp file was created.")
 
-    def radmc_stars(self, coordinates=[0,0,0], radii=[1.392000000e+11], fluxes=None):
+    def radmc_stars(self, coordinates=[0,0,0], radii=None, fluxes=None):
         """Creates stars.inp file for radmc3d program
         --------------------
         Parameters:
@@ -1469,9 +1590,12 @@ class Disk():
 
         fluxes [erg·cm¯²·s⁻¹·Hz¯¹] OR [-K]: array-like, fluxes of stars (as seen from 1 parasec = 3.08572×10¹⁸ cm) in wavelengths λ, expected in [F₁(λ₁), F₁(λ₂), …, F₁(λₙ), F₂(λ₁), …] format. If a blackbody radiation is to be assumed, then a negative value of star's surface temperature is to be entered. For instance if star 2 has surface temperature of 5000 K, then fluxes will look like [F₁(λ₁), F₁(λ₂), … ,F₁(λₙ), -5000, F₃(λ₁), …]
         """
+
+        # https://www.aanda.org/articles/aa/full_html/2017/11/aa29786-16/aa29786-16.html r star
+        if radii is None: radii = [self.par["StellarRadius"]*sol_rad/cm]
         masses = self.par["M_star"]/gram
 
-        if fluxes is None: fluxes = [-self.par["Star_temp"]]
+        if fluxes is None: fluxes = [-self.par["EffectiveTemperature"]]
 
         if len(coordinates)%3 != 0: raise ValueError("Stars error: Number of coordinates isn't a multiple of 3!")
         if len(coordinates) != 3*len(masses): raise ValueError("Stars error: List of star masses isn't the same length as that of their coordinates!")
@@ -2161,7 +2285,7 @@ class Disk():
             buffer_size = int(buffer_size/40)    #there are total of 40 arrays of size "buffer_size" used at once later, so the number has to be adjusted to correctly represent the amount of mermory the arrays take up
             if binary:
                 outfile = open("dust_temperature.bdat"+note,"wb")
-                np.array([1,8,nrcells,nrspecs]).tofile(outfile) #Necessary parameters for radmc3d: 1 (always present), 8(# of bytes),…
+                np.array([1,8,nrcells,nrspecs]).tofile(outfile) #Necessary parameters for radmc3d: 1 (always present), 8(# of bytes per datapoint),…
                 timer = time.time()+60
                 for phi_index in range(len(self.phi_med)):
                     for theta_index, theta in enumerate(self.theta_med):
@@ -2462,14 +2586,70 @@ def main():
     """Test program for the Disk class"""
     disk = Disk()
 
-    """disc of fargo temp"""
+    """ok it's time to finally make some real discs"""
     #region
     disk.fargo_read_fields(no = 4)
+    disk.inner_outer_finish()
+    disk.flat_relax()
+    disk.fargo_input()
+    disk.radmc_write_inputs(nthet = 100)
+    #endregion
+
+
+    """plotting pictures"""
+    #region
+    """
+    names = ["image01.out", "image1.out", "image10.out", "image100.out", "image500.out", "image870.out"]
+    
+    for name in names:
+        fig = plt.figure()
+        im = image.readImage(fname = name)
+        image.plotImage(im, au=True, log=True, maxlog=19, saturate=1, cmap=plt.cm.gist_heat, pltshow = False, fig = fig)
+    plt.show()
+    """
+    #endregion
+    
+
+    """slice imaging"""
+    #region
+    """
+    disk.radmc_read_grid()
+    disk.fargo_read_fields(no = 4)
+    print(len(disk.phi_med))
+    disk.fargo_input()
+    disk.print_params()
+    input()
+    #disk.radmc_read_temperature()
+    disk.radmc_read_density()
+    disk.plot_density_profile(logarithmic_scale=True)
+    disk.plot_T_profile(along="perpendicular", r = 2, show = False)
+    disk.plot_T_slice(logarithmic_scale=True)
+    #endregion
+    #opacita a hustota zhu v slice plot
+    #ruzny velikosti zrn
+    #donani 1995
+    """
+    """disc of fargo temp"""
+    #region
+    """
+    disk.fargo_read_fields(no = 4)
+    disk.inner_outer_finish()
+    #disk.flat_relax(angular=20, radial = 800)
+
     #disk.inner_outer_finish()
     fig = plt.figure()
+    fig2 = plt.figure()
     disk.plot_density_profile(fig = fig, show=False, label = "pre writing and pre relax")
-    disk.flat_relax(angular=20, radial = 500)
+    disk.plot_T_profile(fig = fig2, show=False, label = "pre writing and pre relax")
+    disk.flat_relax(angular=20, radial = 100)
+
     disk.plot_density_profile(fig = fig, show=False, label = "pre writing but after relax")
+    disk.plot_T_profile(fig = fig2, show=False, label = "pre writing and post relax")
+
+    plt.legend()
+    plt.show()
+    disk.plot_fargo_gasdens()
+
 
     mrw = 0
     radmc_inp_params = {
@@ -2490,20 +2670,21 @@ def main():
             print(f"{name} = {value}", file = radmcinp)
     disk.gas_to_dust()
     disk.set_theta_boundary()
-    nthet = 30
+    nthet = 50
     disk.radmc_write_dust_density(nthet = nthet)
-    disk.radmc_write_temperature(nthet = nthet, binary = False)
+    disk.radmc_write_temperature(nthet = nthet)
     disk.radmc_write_grid()
     disk.radmc_wavelength()
     disk.radmc_stars()
     disk.radmc_write_opacity()
 
     disk.radmc_read_temperature()
-    #disk.plot_T_profile(fig = fig, show = False, label="after write")
+    disk.plot_T_profile(fig = fig, show = False, label="after write")
     plt.legend()
     plt.show()
+    disk.plot_T_slice(logarithmic_scale=True)
+    """
     #endregion
-    input()
 
 
     """aftersim plotting"""
