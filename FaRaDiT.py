@@ -483,110 +483,6 @@ class Disk():
         plt.colorbar(ap, label = "kg·m⁻²")
         if show: plt.show()
 
-    def plot_density_profile(self, along = "ray", r = 4, phi = 0, logarithmic_scale=False, r_range = None, theta_range = None, z_range = None, note = "", show = True, fig = None, label = None):
-        """
-        Plots surface density along a ray from the star
-        --------------------
-        Parameters:
-        -------------------- 
-        along: string, determines along which curve to plot the profile. Possibilities are:
-            "ray" — line from star through the equatorial plane
-            "perpendicular" — line perpendicular to the equatorial plane
-            "arc" — curve in 3D spherical coordinates with θ being the variable
-
-        phi [deg]: float, angular coordinate of the ray along which the plot is to be drawn
-
-        r [au]: float, radial coordinate of the ray along which the plot is to be drawn (if arc == "arc" or "perpendicular")
-        
-        logarithmic_scale: bool, if True, log scale will be used on the y axis
-        
-        r_range [au]: array-like, list containing boundaries of desired graph (if arc == "arc" or "perpendicular"),
-
-        theta_range [deg]: array-like, list containing boundaries of desired graph (if arc == "arc" or "perpendicular"),
-
-        z_range [au]: array-like, list containing boundaries of desired graph (if along == "perpendicular")
-                
-        note: string, note to be written under the title,
-        
-        show: bool, if set to True the plot will be immediatelly shown. Otherwise plt.show() or other method with show = True has to be used later
-
-        fig: pyplot figure, which fig the plot is supposed to be added to
-        """
-
-        if fig is None: plt.figure()
-        else: plt.figure(fig.number)
-        plt.subplot(111)
-
-        phi_index = index_before(self.phi_med, phi/180*np.pi)
-
-        if along.casefold() == "arc":
-            if self.density.ndim != 3:
-                raise ValueError("Density plot error: Density field is not 3D! Can't plot the third dimension!")
-            if theta_range is None:
-                start = 0
-                end = len(self.theta_med)-1
-            else:
-                theta_range = np.deg2rad(theta_range)
-                start = index_before(array = self.theta_med, value = theta_range[0])
-                end = index_before(array = self.theta_med, value = theta_range[1])
-            r_index = index_before(array = self.r_med, value = r)
-            x = np.rad2deg(self.theta_med[start:end])
-            data = self.density[r_index, start:end, phi_index]
-
-            plt.title(f"Density of the disk along a θ arc\n at φ = {phi}° and r = {r} au"+f"\n{note}"*(len(note)>0))
-            plt.xlabel("θ [deg]")
-        
-        elif along.casefold() == "perpendicular":
-            from scipy.interpolate import griddata
-
-            r_mesh, theta_mesh = np.meshgrid(self.r_med, self.theta_med)
-            souradnice_sph = np.column_stack((r_mesh.ravel(), theta_mesh.ravel()))
-
-            x = souradnice_sph[:,0]*np.sin(souradnice_sph[:,1])
-            y = souradnice_sph[:,0]*np.cos(souradnice_sph[:,1])
-
-            points = np.column_stack((x,y))
-            temps =  self.density[:, :, phi_index].T.ravel()
-
-            if z_range is None: z_range = [-5, 5]
-            ys = np.linspace(z_range[0], z_range[1], num = 10000)
-            xs = r*np.ones(shape = 1000)
-
-            interp = griddata(points, temps, (xs,ys), method = "nearest")
-
-            plt.title(f"Density of the disk along a line perpendcular to the disk\n at φ = {phi}° and r = {r} au"+f"\n{note}"*(len(note)>0))
-            x = ys
-            data = interp
-            plt.xlabel("z [au]")
-
-        elif along.casefold() == "ray":
-            if r_range is None:
-                start = 0
-                end = len(self.density[:,phi_index])-1
-            else:
-                start = index_before(array = self.r_med, value = r_range[0])
-                end = index_before(array = self.r_med, value = r_range[1])
-            x = self.r_med[start:end]
-            if self.density.ndim == 2:
-                data = self.density[start:end,phi_index]
-            else:
-                theta_midplane = (len(self.theta_med)-1)
-                data = self.density[start:end, theta_midplane, phi_index]
-
-            plt.xlabel("r [au]")
-            plt.title(f"Equatorial density of the disk at φ = {phi}°"+f"\n{note}"*(len(note)>0))
-            
-        else: raise ValueError(f"Density plot error: Unknow option '{along}'! Only accepted options are 'ray', 'perpendicular' and 'arc'")
-
-        
-        plt.plot(x, data, label = label)
-        if logarithmic_scale: plt.yscale('log')
-        if self.density.ndim == 3: plt.ylabel("ρ [kg·m⁻³]")
-        elif self.density.ndim == 2: plt.ylabel("σ [kg·m⁻²]")
-        else: raise ValueError(f"Strange dimension of density {self.density.ndim}, what's going on?")
-        
-        if show: plt.show()
-
     def plot_T_profile(self, along = "ray", r = 4, phi = 0, logarithmic_scale = False, r_range = None, theta_range = None, z_range = None, note = "", show = True, fig = None, label = None):
         """
         Plots temperature along a set curve
@@ -796,28 +692,54 @@ class Disk():
         
         plt.plot(x, data, label = label)
         if logarithmic_scale: plt.yscale('log')
-        plt.ylabel("density [kg/m³]")
+
+        if self.density.ndim == 3: plt.ylabel("ρ [kg·m⁻³]")
+        elif self.density.ndim == 2: plt.ylabel("σ [kg·m⁻²]")
+        else: raise ValueError(f"Strange dimension of density {self.density.ndim}, what's going on?")
         
         if show: plt.show()
 
-    def plot_grid(self, phi = 0, fig = None, show = True):
+    def plot_grid(self, phi = 0, fig = None, show = True, flat = True):
         """
         Plots points of cell centers or boundaries
         TBD
         """
-        if fig is None: plt.figure()
+        if fig is None: fig = plt.figure()
         else: plt.figure(fig.number)
         
         theta_points = np.append(self.theta_med, np.pi-self.theta_med[::-1])
-        r_mesh, theta_mesh = np.meshgrid(self.r_med, theta_points)
-        souradnice_sph = np.column_stack((r_mesh.ravel(), theta_mesh.ravel()))
-        x = souradnice_sph[:,0]*np.sin(souradnice_sph[:,1])
-        y = souradnice_sph[:,0]*np.cos(souradnice_sph[:,1])
 
-        plt.scatter(x,y, s = 0.5, label = "Gridpoint centers")
-        plt.legend()
-        plt.ylabel("z [au]")
-        plt.xlabel("r [au]")
+        if not flat:
+            r_mesh, theta_mesh, phi_mesh = np.meshgrid(self.r_med, theta_points, self.phi_med)
+
+            souradnice_sph = np.column_stack((r_mesh.ravel(), theta_mesh.ravel(), phi_mesh.ravel()))
+
+            x = souradnice_sph[:,0]*np.sin(souradnice_sph[:,2])*np.sin(souradnice_sph[:,1])
+            y = souradnice_sph[:,0]*np.cos(souradnice_sph[:,2])*np.sin(souradnice_sph[:,1])
+            z = souradnice_sph[:,0]*np.cos(souradnice_sph[:,1])
+
+            from mpl_toolkits.mplot3d import Axes3D
+            ax = Axes3D(fig)
+            
+            ax.scatter(x,y,z, label = "Grid centres")
+            ranges = (np.max(x)-np.min(x), np.max(y)-np.min(y), np.max(z)-np.min(z)) # used to set equal aspect ratio
+            ax.set_box_aspect(ranges)
+            ax.set_xlabel("x [au]")
+            ax.set_ylabel("y [au]")
+            ax.set_zlabel("z [au]")
+            plt.legend()
+
+        
+        else:
+            r_mesh, theta_mesh = np.meshgrid(self.r_med, theta_points)
+            souradnice_sph = np.column_stack((r_mesh.ravel(), theta_mesh.ravel()))
+            x = souradnice_sph[:,0]*np.sin(souradnice_sph[:,1])
+            y = souradnice_sph[:,0]*np.cos(souradnice_sph[:,1])
+
+            plt.scatter(x,y, s = 0.5, label = "Gridpoint centers")
+            plt.legend()
+            plt.ylabel("z [au]")
+            plt.xlabel("r [au]")
         if show: plt.show()
 
     def plot_scale_height(self, phi = 0, thickness = f_z, show = True, fig = None):
@@ -940,6 +862,14 @@ class Disk():
             self.Rmax = self.par["Rmax"]
         except IndexError:
             pass 
+        try:
+            self.par["Nrad"] = int(self.par["Nrad"])
+        except ValueError:
+            pass
+        try:
+            self.par["Nsec"] = int(self.par["Nsec"])
+        except ValueError:
+            pass
 
     def fargo_read_field(self, filename):
         """Read 1 Fargo binary file == field;
@@ -1019,8 +949,6 @@ class Disk():
         """
         print(f"Relaxing disk...")
 
-        ### THIS WHOLE PROCEDURE IS WRONG! just try relaxing it to a large number of radial sectors and plot pre and post temperature in r
-
         if radial not in [2**i for i in range(13)]:
             raise ValueError(f"Relax error: only powers of 2 up to 1024 are allowed for radial relax! {radial} not allowed")
         if angular not in [2**i for i in range(10)] and angular//3 not in [2**i for i in range(10)]:
@@ -1031,25 +959,19 @@ class Disk():
         Nrad = self.par["Nrad"]
         Nsec = self.par["Nsec"]
 
-        if angular != 0:
-            new_phis = np.linspace(self.Phimin, self.Phimax, num = 2*angular+1)
-            self.phi_inf = new_phis[0:-1:2]
-            self.phi_med = new_phis[1::2]
-            self.phi_sup = new_phis[2::2]
+        from skimage.transform import downscale_local_mean as dlm
 
-        if radial != 0:
-                new_rs = np.linspace(self.Rmin, self.Rmax, num = 2*radial+1)
-                self.r_inf = new_rs[0:-1:2]
-                self.r_med = new_rs[1::2]
-                self.r_sup = new_rs[2::2]
+        newsigma = dlm(newsigma, (Nrad//radial, Nsec//angular), cval = np.NaN)
+        newT = dlm(newT, (Nrad//radial, Nsec//angular), cval = np.NaN)
 
-        if angular != 0:
-            newsigma = newsigma.T.reshape(-1, Nsec//angular, newsigma.T.shape[1]).mean(axis = 1).T
-            newT = newT.T.reshape(-1, Nsec//angular, newT.T.shape[1]).mean(axis = 1).T
+        self.phi_inf = self.phi_inf[:-(Nsec//angular-1):Nsec//angular]
+        self.phi_med = dlm(self.phi_med, Nsec//angular, cval = np.NaN)
+        self.phi_sup = self.phi_sup[Nsec//angular-1::Nsec//angular]
 
-        if radial != 0:
-            newsigma = newsigma.reshape(-1, Nrad//radial, newsigma.shape[1]).mean(axis = 1)
-            newT = newT.reshape(-1, Nrad//radial, newT.shape[1]).mean(axis = 1)
+        self.r_inf = self.r_inf[:-(Nrad//radial-1):Nrad//radial]
+        self.r_med = dlm(self.r_med, Nrad//radial, cval = np.NaN)
+        self.r_sup = self.r_sup[Nrad//radial-1::Nrad//radial]
+
 
         if log:
             new_rs = np.logspace(np.log10(self.Rmin), np.log10(self.Rmax), num = 2*radial+1)
@@ -1076,7 +998,7 @@ class Disk():
         r_minmax = [np.min(self.r_sup - self.r_inf), np.max(self.r_sup - self.r_inf)]
         phi_minmax = [np.min(phi_distances), np.max(phi_distances)]
 
-        print(f"Flat disk relaxed to "+ f"a log grid "*log + f"with a total of {Nrad} radial and {Nsec} angular sectors. Cells are now between {r_minmax[0]:.1e} and {r_minmax[1]:.1e} au wide in radial and between {phi_minmax[0]:.1e} and {phi_minmax[1]:.1e} au in angular directions")
+        print(f"Flat disk relaxed to "+ f"a log grid "*log + f"with a total of {Nrad} radial and {Nsec} angular sectors. Cells are now between \n{r_minmax[0]:.1e} and {r_minmax[1]:.1e} au wide in radial and between \n{phi_minmax[0]:.1e} and {phi_minmax[1]:.1e} au in angular directions")
 
         #region
         """
@@ -1235,15 +1157,14 @@ class Disk():
         def v(r):   #function taking care of temperature's fading as it gets towards the outer rim
             return np.exp(-((r-self.Rmax)/r2)**2.0)
 
-
         #Here starts the finishing of the inner part of the disk      
         if inner_steps != 0:
             dr = (self.Rmin-r_newmin)/inner_steps
-            self.r_inf = np.insert(self.r_inf, 0, np.linspace(r_newmin,self.Rmin+dr, inner_steps+1)[:-1] )
+            self.r_inf = np.insert(self.r_inf, 0, np.linspace(r_newmin,self.Rmin+dr, inner_steps+1)[:-1])
             r_med_new =  np.linspace(r_newmin+dr/2, self.Rmin-dr/2, inner_steps)
             self.r_med = np.insert(self.r_med, 0, r_med_new)
             self.r_sup = np.insert(self.r_sup, 0, np.linspace(r_newmin+dr,self.Rmin, inner_steps+1)[1:])
-            self.par["Nrad"] += outer_steps
+            self.par["Nrad"] += inner_steps
 
             inner_Csigma = self.density[0,:]/f(self.Rmin)
             inner_CT =     self.T[0,:]/t(self.Rmin)
@@ -1260,6 +1181,7 @@ class Disk():
             self.density = np.insert(self.density, [0], new_inner_sigma, axis = 0)
             self.T =     np.insert(self.T, [0], new_inner_T, axis = 0)
 
+            self.par["Rmin"] = r_newmin
             self.Rmin = r_newmin
 
         #Here starts the finishing of the outer part of the disk
@@ -1269,7 +1191,7 @@ class Disk():
             self.r_inf = np.append(self.r_inf, np.linspace(self.Rmax, r_newmax+dr, outer_steps+1)[1:] )
             self.r_med = np.append(self.r_med, r_med_new)
             self.r_sup = np.append(self.r_sup, np.linspace(self.Rmax+dr, r_newmax, outer_steps+1)[1:] )
-            self.par["Nrad"] += inner_steps
+            self.par["Nrad"] += outer_steps
 
             outer_Csigma = self.density[-1,:]/f(self.Rmax)
             outer_CT =     self.T[-1,:]/t(self.Rmax)
@@ -1287,6 +1209,8 @@ class Disk():
             self.T =     np.append(self.T,     new_outer_T,     axis = 0)
 
             self.Rmax = r_newmax
+            self.par["Rmax"] = r_newmax
+
         print(f"The disk was finished with {inner_steps} new inner and {outer_steps} new outer radial sectors")
 
     def gas_to_dust(self):
@@ -1309,11 +1233,13 @@ class Disk():
         --------------------
         wanted_depth: double, smallest wanted depth such that this part of the disk is included
 
-        extra_margin [rad]: margin on top of the wanted crop
+        extra_margin [deg]: margin on top of the wanted crop
         """
 
         # Find the wav at which to calculate tau. A good guess might be to look at mean temp of the disc
     
+        extra_margin = np.deg2rad(extra_margin)
+
         b = 2897.771955 #microns per Kelvin via CODATA 2018 Wien's displacement law
         wav = b/np.mean(self.T) #in microns
 
@@ -2188,7 +2114,7 @@ class Disk():
         image.plotImage(im, au=True, log=True, maxlog=13, saturate=1e-7, cmap=plt.cm.get_cmap("gist_heat"))
         return [(time.time()-start_time)/60/60, radial_relax, 2*nthet, angular_relax]
 
-    def radmc_write_inputs(self, mrw = None, thickness = f_z, nthet = 100, binary = True, buffer_size = 4096*32, gas_to_dust = True, **kwargs):
+    def radmc_write_inputs(self, mrw = None, thickness = f_z, nthet = 100, binary = True, buffer_size = 4096*32, gas_to_dust = True, wanted_depth = 0.001, extra_margin = 0, **kwargs):
         """
         Creates all the necessary files for running radmc3d script
         --------------------
@@ -2209,6 +2135,10 @@ class Disk():
 
         gas_to_dust: bool, if True, will assume only gas density was provided and will perform gas_to_dust function
 
+        wanted_depth [m⁻¹]: float, the optical depth at which „the disk ends“; used for setting boundary of the theta direction
+
+        extra_margin [deg]: float, extra margin to be put on top of the new theta boundary
+
         **kwargs: see radmc3d manual, chapter MAIN INPUT AND OUTPUT FILES OF RADMC-3D, section INPUT: radmc3d.inp. There's like a brazillion of inputs, you can't demand from me to write them all here
         """
         if mrw is None:
@@ -2223,7 +2153,7 @@ class Disk():
             "itempdecoup": 1,   #all dust species are thermally independet
             "lines_mode": -1,   #default, needs extra files to work properly
             "modified_random_walk": int(mrw),   #if 1 and if photon is stuck for too long in a cell, the probability of where it will exit is calculated and the photon is transported there
-            "nphot": 100000000,    #number of photons for thermal siulation
+            "nphot": 1e9,    #number of photons for thermal siulation. Careful, radmc needs this to be int, not float! I convert it below
             "nphot_scat": 300000,   #number of photons for image-making
             "nphot_spec": 100000,   #number of photons for spectra-making
             "rto_style": 3,     #1 for output files to be ascii, 3 for binary, 2 for pain (old and as of now obsolete fortran format)
@@ -2232,13 +2162,14 @@ class Disk():
         }
 
         for kw in kwargs:
+            if kw == "nphot": kwargs[kw] = int(kwargs[kw]) 
             radmc_inp_params[kw] = kwargs[kw]
 
         with open("radmc3d.inp", "w") as radmcinp:
             for name, value in radmc_inp_params.items():
                 print(f"{name} = {value}", file = radmcinp)
         if gas_to_dust: self.gas_to_dust()
-        self.set_theta_boundary()
+        self.set_theta_boundary(wanted_depth=wanted_depth, extra_margin=extra_margin)
         self.radmc_write_dust_density(binary = binary, thickness = thickness, nthet=nthet, buffer_size=buffer_size)
         self.radmc_write_grid()
         self.radmc_wavelength()
@@ -2388,7 +2319,6 @@ class Disk():
                         timer += 300
 
             outfile.close()
-
 
     def radmc_read_temperature(self, isbinary = None, filename = None):
         """
@@ -2588,11 +2518,16 @@ def main():
 
     """ok it's time to finally make some real discs"""
     #region
+    
     disk.fargo_read_fields(no = 4)
-    disk.inner_outer_finish()
-    disk.flat_relax()
     disk.fargo_input()
-    disk.radmc_write_inputs(nthet = 100)
+    disk.inner_outer_finish(r_newmax=30)
+    disk.flat_relax(radial=16, angular=16)
+    disk.radmc_write_inputs(nthet = 5, extra_margin=5, nphot = 1e9)
+    disk.radmc_read_grid()
+    disk.plot_grid(flat = False)
+    os.system('radmc3d mctherm setthreads 6 countwrite 100000')
+    
     #endregion
 
 
@@ -2612,23 +2547,19 @@ def main():
 
     """slice imaging"""
     #region
-    """
     disk.radmc_read_grid()
-    disk.fargo_read_fields(no = 4)
-    print(len(disk.phi_med))
-    disk.fargo_input()
-    disk.print_params()
-    input()
-    #disk.radmc_read_temperature()
+    disk.radmc_read_temperature()
     disk.radmc_read_density()
     disk.plot_density_profile(logarithmic_scale=True)
     disk.plot_T_profile(along="perpendicular", r = 2, show = False)
+
     disk.plot_T_slice(logarithmic_scale=True)
     #endregion
     #opacita a hustota zhu v slice plot
     #ruzny velikosti zrn
     #donani 1995
-    """
+    
+
     """disc of fargo temp"""
     #region
     """
