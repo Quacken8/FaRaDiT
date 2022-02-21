@@ -548,7 +548,7 @@ class Disk():
             points = np.column_stack((x,y))
             temps =  np.append(self.T[:, :, phi_index],self.T[:, ::-1, phi_index], axis = 1).T.ravel()
 
-            if z_range is None: z_range = [-5, 5]
+            if z_range is None: z_range = [-r*np.sin(self.theta_inf[0]), r*np.sin(self.theta_inf[0])]
             ys = np.linspace(z_range[0], z_range[1], num = 10000)
             xs = r*np.ones(shape = 10000)
 
@@ -591,7 +591,7 @@ class Disk():
         
         if show: plt.show()
 
-    def plot_density_profile(self, along = "ray", r = 4, phi = 0, logarithmic_scale = False, r_range = None, theta_range = None, note = "", show = True, fig = None, label = None):
+    def plot_density_profile(self, along = "ray", r = 4, phi = 0, logarithmic_scale = False, r_range = None, theta_range = None, z_range = None, note = "", show = True, fig = None, label = None):
         """
         Plots gas density along a set curve
         --------------------
@@ -608,9 +608,11 @@ class Disk():
         
         logarithmic_scale: bool, if True, log scale will be used on the y axis
         
-        r_range [au]: array-like, list containing boundaries of desired graph (if arc == "arc" or "perpendicular"),
+        r_range [au]: array-like, list containing boundaries of desired graph (if arc == "arc"),
 
-        theta_range [deg]: array-like, list containing boundaries of desired graph (if arc == "arc" or "perpendicular"),
+        theta_range [deg]: array-like, list containing boundaries of desired graph (if arc == "perpendicular"),
+
+        z_range [au]: array-like, list 
         
         note: string, note to be written under the title,
         
@@ -654,7 +656,8 @@ class Disk():
             points = np.column_stack((x,y))
             rhos =  np.append(self.density[:, :, phi_index], self.density[:, ::-1, phi_index], axis = 1).T.ravel()
 
-            ys = np.linspace(-20, 20, num = 10000)
+            if z_range is None: z_range = [-r*np.sin(self.theta_inf[0]), r*np.sin(self.theta_inf[0])]
+            ys = np.linspace(z_range[0], z_range[1], num = 10000)
             xs = r*np.ones(shape = 10000)
 
             interp = griddata(points, rhos, (xs,ys), method = "nearest")
@@ -719,7 +722,8 @@ class Disk():
             z = souradnice_sph[:,0]*np.cos(souradnice_sph[:,1])
 
             from mpl_toolkits.mplot3d import Axes3D
-            ax = Axes3D(fig)
+            ax = Axes3D(fig, auto_add_to_figure = False)
+            fig.add_axes(ax)
             
             ax.scatter(x,y,z, label = "Grid centres")
             ranges = (np.max(x)-np.min(x), np.max(y)-np.min(y), np.max(z)-np.min(z)) # used to set equal aspect ratio
@@ -2141,6 +2145,9 @@ class Disk():
 
         **kwargs: see radmc3d manual, chapter MAIN INPUT AND OUTPUT FILES OF RADMC-3D, section INPUT: radmc3d.inp. There's like a brazillion of inputs, you can't demand from me to write them all here
         """
+        
+        self.radmc_write_opacity()
+
         if mrw is None:
             depth = self.optical_depth(from_star=True, wav = 10, message = False, thickness=thickness)
             if depth > 1e7:
@@ -2174,7 +2181,6 @@ class Disk():
         self.radmc_write_grid()
         self.radmc_wavelength()
         self.radmc_stars()
-        self.radmc_write_opacity()
 
     def radmc_write_temperature(self, binary=True, note = "", nthet = 100, buffer_size = 4096*32*40, thickness = identity_T):
         """
@@ -2438,23 +2444,6 @@ class Disk():
         self.radmc_read_density()
         self.density *= to_half
 
-
-    def add_heating(self):
-        """
-        Tries to add some temperature as aresult of simplified viscose heating to make up for the defference between fargo and radmc temps
-        TBD
-        https://arxiv.org/pdf/2005.09132.pdf ??
-        As of yet unnecessary¿?
-        """
-        #kappa = ?? #opacity ??
-        #nu = ?? ##viscosity
-        
-        def additional_T4(r, sigma):
-            F = 3*np.pi*sigma*nu
-            return 3*G*self.par["M_star"]*F*3*kappa*sigma/(8*np.pi*steff*8*r^3)
-        
-        self.T = (self.T^4+additional_T4(self.r_med, self.sigma))^.25
-
     def add_heatsource(self, binary = False):
         """
         Adds heatsource file for radmc3d
@@ -2466,7 +2455,7 @@ class Disk():
         bacha mluvi jeste o tepelne vodivosti
         """
 
-        #nu = ?? #viscostiy in SI      
+        alpha = 1e-2    # alpha parameter, for turbulent flow in order of 1e-2 according to Schobert et. al. 2019
 
         if len(self.density) == 0: self.radmc_read_density()
         if self.density.ndim == 2: raise ValueError("Heatsource error: disk is flat!")
@@ -2477,7 +2466,11 @@ class Disk():
 
             for phi_index, phi in enumerate(self.phi_med):  #double for loop, might be too slow!
                 for theta_index, theta in enumerate(self.theta_med):
-                        Q_plus = 9/4*self.density[:,theta_index,phi_index]*nu*(G*self.par["M_star"]/self.r_med**3)**2
+
+                        nu = R_gas*self.T[:,theta_index,phi_index]*alpha/mu*np.sqrt(self.r_med**3/G/self.par["M_star"]) # viscostiy in SI # νₜ = αc²/Ω; Schobert et. al. 2019 eq. 20
+
+                        Q_plus = self.density[:,theta_index,phi_index]*nu*(9/4*G*self.par["M_star"]/self.r_med**3)
+                        
                         Q_plus.tofile(outfile, sep = "\n", format = '%.9e')
                         outfile.write("\n")
 
@@ -2488,7 +2481,11 @@ class Disk():
 
             for phi_index, phi in enumerate(self.phi_med):
                 for theta_index, theta in enumerate(self.theta_med):
-                        Q_plus = 9/4*self.density[:,theta_index,phi_index]*nu*(G*self.par["M_star"]/self.r_med**3)**2
+                    
+                        nu = R_gas*self.T[:,theta_index,phi_index]*alpha/mu*np.sqrt(self.r_med**3/G/self.par["M_star"]) #viscostiy in SI # νₜ = αc²/Ω; Schobert et. al. 2019 eq. 20
+
+                        Q_plus = self.density[:,theta_index,phi_index]*nu*(9/4*G*self.par["M_star"]/self.r_med**3)
+                        
                         Q_plus.tofile(outfile)
 
             outfile.close()
@@ -2521,13 +2518,29 @@ def main():
     
     disk.fargo_read_fields(no = 4)
     disk.fargo_input()
-    disk.inner_outer_finish(r_newmax=30)
-    disk.flat_relax(radial=16, angular=16)
-    disk.radmc_write_inputs(nthet = 5, extra_margin=5, nphot = 1e9)
-    disk.radmc_read_grid()
-    disk.plot_grid(flat = False)
-    os.system('radmc3d mctherm setthreads 6 countwrite 100000')
+    disk.inner_outer_finish(r_newmax=30, inner_steps=256, outer_steps = 512+256)
+    disk.flat_relax(radial=256, angular=24)
+    #disk.plot_density_profile(logarithmic_scale=True)
+    disk.radmc_write_inputs(nthet = 25, extra_margin=5, nphot = 1e10)
+    #disk.radmc_write_temperature(nthet = 25)
+    input()
     
+    #endregion
+
+    """Viscous heating, potřebuje teplotu od předtim z radmc"""
+    #region
+    disk.fargo_read_fields(no = 4)
+    disk.fargo_input()
+    disk.inner_outer_finish(r_newmax=30, inner_steps=256, outer_steps = 512+256)
+    disk.flat_relax(radial=256, angular=24)
+    #disk.plot_density_profile(logarithmic_scale=True)
+    disk.radmc_write_inputs(nthet = 25, extra_margin=5, nphot = 1e10)
+    disk.radmc_read_density()
+    disk.radmc_read_temperature()
+    disk.add_heatsource()
+    #disk.radmc_write_temperature(nthet = 25)
+    os.system("radmc3d mctherm")
+    input()
     #endregion
 
 
@@ -2544,16 +2557,17 @@ def main():
     """
     #endregion
     
-
+    
     """slice imaging"""
     #region
     disk.radmc_read_grid()
     disk.radmc_read_temperature()
     disk.radmc_read_density()
     disk.plot_density_profile(logarithmic_scale=True)
-    disk.plot_T_profile(along="perpendicular", r = 2, show = False)
-
+    disk.plot_T_profile(along="perpendicular", r = 5, show = False)
     disk.plot_T_slice(logarithmic_scale=True)
+    disk.plot_density_profile(along="perpendicular", r = 5, show = False, logarithmic_scale=True)
+    disk.plot_density_slice(logarithmic_scale=False)
     #endregion
     #opacita a hustota zhu v slice plot
     #ruzny velikosti zrn
